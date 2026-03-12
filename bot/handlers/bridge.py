@@ -1,4 +1,12 @@
-"""Bridge handler — /bridge command for SOL → USDC Polygon bridging."""
+"""Bridge handler — /bridge command for SOL → USDC Polygon bridging.
+
+Scénario A : le SOL reste sur le wallet Solana de l'utilisateur.
+Le bot ne signe aucune transaction Solana. Il :
+- enregistre l'adresse Solana de l'utilisateur,
+- récupère un devis SOL → USDC (Polygon),
+- explique comment exécuter le bridge via une interface externe (Li.Fi, etc.),
+- rappelle l'adresse Polygon cible pour les USDC.
+"""
 
 import logging
 
@@ -14,14 +22,12 @@ from telegram.ext import (
 
 from bot.db.session import async_session
 from bot.services.user_service import get_user_by_telegram_id
-from bot.services.bridge import get_best_quote, execute_bridge, BridgeProvider
-from bot.services.crypto import decrypt_private_key
+from bot.services.bridge import get_best_quote, BridgeProvider
 from bot.config import settings
-from bot.handlers.notifications import format_bridge_notification
 
 logger = logging.getLogger(__name__)
 
-AMOUNT_INPUT, CONFIRM_BRIDGE = range(2)
+SOL_ADDRESS, AMOUNT_INPUT = range(2)
 
 
 async def bridge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -34,18 +40,54 @@ async def bridge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("❌ Compte non trouvé. /start")
             return ConversationHandler.END
 
-        if not user.solana_wallet_address:
-            await update.message.reply_text(
-                "❌ **Aucun wallet Solana configuré.**\n\n"
-                "Ajoutez votre wallet Solana dans /settings pour utiliser le bridge.",
-                parse_mode="Markdown",
-            )
-            return ConversationHandler.END
+        sol_wallet = user.solana_wallet_address
+
+    if not sol_wallet:
+        await update.message.reply_text(
+            "☀️ **Bridge SOL → USDC (Polygon)**\n\n"
+            "Pour commencer, envoyez votre **adresse Solana** (celle où vous avez vos SOL).\n\n"
+            "Exemple : `5F2h...xyz`.\n\n"
+            "Le bot utilisera cette adresse uniquement pour calculer des devis et "
+            "vous aider à configurer le bridge. Le SOL restera toujours sur votre propre wallet.",
+            parse_mode="Markdown",
+        )
+        return SOL_ADDRESS
 
     await update.message.reply_text(
         "🌉 **Bridge SOL → USDC Polygon**\n\n"
         "Combien de SOL voulez-vous bridger ?\n\n"
         "Envoyez le montant (ex: `1.5`) :",
+        parse_mode="Markdown",
+    )
+    return AMOUNT_INPUT
+
+
+async def receive_solana_address(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Store user's Solana address and ask for amount."""
+    address = update.message.text.strip()
+
+    # Validation très basique : longueur raisonnable, pas vide
+    if len(address) < 20 or len(address) > 60:
+        await update.message.reply_text(
+            "❌ Adresse Solana invalide. Vérifiez et renvoyez-la."
+        )
+        return SOL_ADDRESS
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, update.effective_user.id)
+        if not user:
+            await update.message.reply_text("❌ Compte non trouvé. /start")
+            return ConversationHandler.END
+
+        user.solana_wallet_address = address
+        await session.commit()
+
+    await update.message.reply_text(
+        "✅ Adresse Solana enregistrée.\n\n"
+        "Maintenant, envoyez le **montant de SOL** que vous souhaitez bridger "
+        "(ex: `1.5`).",
         parse_mode="Markdown",
     )
     return AMOUNT_INPUT
@@ -68,8 +110,19 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     async with async_session() as session:
         user = await get_user_by_telegram_id(session, update.effective_user.id)
+        if not user:
+            await update.message.reply_text("❌ Compte non trouvé. /start")
+            return ConversationHandler.END
+
         sol_wallet = user.solana_wallet_address
-        poly_wallet = user.wallet_address or sol_wallet
+        poly_wallet = user.wallet_address or ""
+
+    if not sol_wallet:
+        await update.message.reply_text(
+            "❌ Adresse Solana manquante. Relancez /bridge.",
+            parse_mode="Markdown",
+        )
+        return ConversationHandler.END
 
     # Get best quote
     quote = await get_best_quote(amount, sol_wallet, poly_wallet)
@@ -82,88 +135,39 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ConversationHandler.END
 
-    context.user_data["bridge_quote"] = quote
-    context.user_data["bridge_amount"] = amount
-
     provider_name = "Li.Fi" if quote.provider == BridgeProvider.LIFI else "Across"
+    lifi_url = "https://li.quest/"
+
     keyboard = [
         [
-            InlineKeyboardButton("✅ Confirmer le bridge", callback_data="bridge_confirm"),
-            InlineKeyboardButton("❌ Annuler", callback_data="bridge_cancel"),
-        ]
+            InlineKeyboardButton("🔗 Ouvrir Li.Fi (bridge)", url=lifi_url),
+        ],
+        [
+            InlineKeyboardButton("❌ Fermer", callback_data="bridge_cancel"),
+        ],
     ]
 
+    poly_display = poly_wallet or "votre wallet Polygon (celui utilisé par le bot)"
+
     await update.message.reply_text(
-        "🌉 **Devis Bridge**\n"
+        "🌉 **Devis Bridge SOL → USDC (Polygon)**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"☀️ Envoi      : **{amount:.4f} SOL** (Solana)\n"
-        f"💵 Réception  : **~{quote.output_amount:.2f} USDC** (Polygon)\n"
+        f"☀️ Envoi      : **{amount:.4f} SOL** (depuis votre wallet Solana)\n"
+        f"💵 Réception  : **~{quote.output_amount:.2f} USDC** sur Polygon\n"
         f"🔄 Provider   : **{provider_name}**\n"
         f"💸 Frais      : **~{quote.fee_usd:.2f} USD**\n"
         f"⏱️ Estimé     : **~{quote.estimated_time_seconds // 60} min**\n"
         f"📊 Slippage   : **{settings.bridge_slippage * 100:.1f}%**\n\n"
-        "Confirmer le bridge ?",
+        f"📬 Adresse Polygon cible : `{poly_display}`\n\n"
+        "➡️ Étapes recommandées :\n"
+        "1. Cliquez sur **\"Ouvrir Li.Fi (bridge)\"**.\n"
+        "2. Connectez **votre wallet Solana** (celui dont vous avez l'adresse ci‑dessus).\n"
+        "3. Configurez le bridge vers **USDC sur Polygon** avec l'adresse cible affichée.\n"
+        "4. Validez la transaction depuis votre wallet.\n\n"
+        "Le bot ne signe aucune transaction Solana : le SOL reste toujours sur votre propre wallet.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
-    return CONFIRM_BRIDGE
-
-
-async def bridge_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Execute the bridge."""
-    query = update.callback_query
-    await query.answer()
-
-    quote = context.user_data.get("bridge_quote")
-    if not quote:
-        await query.edit_message_text("❌ Erreur — devis expiré. Relancez /bridge.")
-        return ConversationHandler.END
-
-    await query.edit_message_text(
-        "🟡 **Bridge en cours...**\n\n"
-        "⏳ Signature et soumission de la transaction...",
-        parse_mode="Markdown",
-    )
-
-    async with async_session() as session:
-        user = await get_user_by_telegram_id(session, query.from_user.id)
-        if not user or not user.encrypted_solana_key:
-            await query.edit_message_text("❌ Erreur — clé Solana manquante.")
-            return ConversationHandler.END
-
-        try:
-            pk = decrypt_private_key(
-                user.encrypted_solana_key,
-                settings.encryption_key,
-                user.uuid,
-            )
-        except Exception:
-            await query.edit_message_text("❌ Erreur de déchiffrement de la clé Solana.")
-            return ConversationHandler.END
-
-    result = await execute_bridge(quote, pk)
-
-    if result.success:
-        text = format_bridge_notification(
-            amount_sol=quote.input_amount,
-            amount_usdc=result.output_amount,
-            bridge_provider=quote.provider.value,
-            fee_usd=result.fee_usd,
-            tx_hash=result.tx_hash or "pending",
-            status="completed",
-        )
-    else:
-        text = (
-            "🔴 **Bridge échoué**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"❌ Erreur : {result.error}\n\n"
-            "Réessayez avec /bridge."
-        )
-
-    await query.edit_message_text(text, parse_mode="Markdown")
-
-    context.user_data.pop("bridge_quote", None)
-    context.user_data.pop("bridge_amount", None)
     return ConversationHandler.END
 
 
@@ -184,12 +188,11 @@ def get_bridge_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("bridge", bridge_command)],
         states={
+            SOL_ADDRESS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_solana_address),
+            ],
             AMOUNT_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount),
-            ],
-            CONFIRM_BRIDGE: [
-                CallbackQueryHandler(bridge_confirm, pattern="^bridge_confirm$"),
-                CallbackQueryHandler(bridge_cancel, pattern="^bridge_cancel$"),
             ],
         },
         fallbacks=[CommandHandler("bridge", bridge_command)],
