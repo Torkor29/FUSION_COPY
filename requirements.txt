@@ -21,7 +21,7 @@ solana==0.35.0
 # Polymarket
 py-clob-client==0.18.0
 
-# Bridge
+# Bridge / HTTP
 httpx==0.28.1
 
 # Crypto

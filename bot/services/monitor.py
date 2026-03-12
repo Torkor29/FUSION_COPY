@@ -245,3 +245,13 @@ class MultiMasterMonitor:
     @property
     def is_running(self) -> bool:
         return self._is_running
+
+    async def fast_check_all_wallets(self) -> None:
+        """Expose a public trigger to forcer un check immédiat.
+
+        Utilisé par le monitor WebSocket (CLOB) pour accélérer la détection
+        en complément du polling Gamma.
+        """
+        if not self._is_running:
+            return
+        await self._check_all_wallets()

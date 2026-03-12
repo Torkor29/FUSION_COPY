@@ -134,6 +134,9 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
         f"⏱️ Délai de copie       : **{us.copy_delay_seconds}s**\n"
         f"🔔 Confirmation manuelle: **{'Oui' if us.manual_confirmation else 'Non'}**\n"
         f"🌉 Auto-bridge SOL     : **{'Activé' if us.auto_bridge_sol else 'Désactivé'}**\n"
+        "🔍 Mode de suivi masters :\n"
+        f"   • Gamma (positions Gamma API) : **{'Oui' if getattr(us, 'use_gamma_monitor', True) else 'Non'}**\n"
+        f"   • WebSocket CLOB (temps réel) : **{'Oui' if getattr(us, 'use_ws_monitor', False) else 'Non'}**\n"
         f"📝 Paper Trading        : **{'Oui' if paper_trading else 'Non'}**\n"
     )
 
@@ -165,6 +168,14 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
             [
                 InlineKeyboardButton(
                     "✅/❌ Bornes par trade", callback_data="set_advanced_limits"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔍 Gamma ON/OFF", callback_data="set_use_gamma_monitor"
+                ),
+                InlineKeyboardButton(
+                    "🔍 WebSocket ON/OFF", callback_data="set_use_ws_monitor"
                 ),
             ],
             [
@@ -249,12 +260,29 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return MAIN_MENU
 
     # Toggle fields (boolean)
-    if field in ("manual_confirmation", "auto_bridge_sol"):
+    if field in ("manual_confirmation", "auto_bridge_sol", "use_gamma_monitor", "use_ws_monitor"):
         async with async_session() as session:
             user = await get_user_by_telegram_id(session, query.from_user.id)
             us = await get_or_create_settings(session, user)
-            new_val = not getattr(us, field)
-            await update_setting(session, us, field, new_val)
+            current = getattr(us, field)
+
+            # On évite le cas les deux OFF : si on désactive le dernier actif,
+            # on force l'autre à ON pour qu'il y ait toujours au moins une source.
+            if field == "use_gamma_monitor" and current and not getattr(us, "use_ws_monitor", False):
+                # basculer de Gamma seul -> WebSocket seul
+                await update_setting(session, us, "use_gamma_monitor", False)
+                await update_setting(session, us, "use_ws_monitor", True)
+            elif field == "use_ws_monitor" and current and not getattr(us, "use_gamma_monitor", True):
+                # basculer de WebSocket seul -> Gamma seul
+                await update_setting(session, us, "use_ws_monitor", False)
+                await update_setting(session, us, "use_gamma_monitor", True)
+            else:
+                # toggle simple
+                new_val = not current
+                await update_setting(session, us, field, new_val)
+
+            # recharger pour affichage
+            await session.refresh(us)
             text, keyboard = _build_main_menu(us, user.paper_trading)
         await query.edit_message_text(
             text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)

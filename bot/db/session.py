@@ -29,10 +29,13 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
         # Add columns that may not exist yet on already-created tables.
-        # Idempotent — silently ignored if the column already exists.
+        # Idempotent — silencieux si la colonne existe déjà.
         migrations = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS polymarket_approved BOOLEAN DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_auto_created BOOLEAN DEFAULT false",
+            # user_settings: mode de suivi des masters (Gamma vs WebSocket)
+            "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS use_gamma_monitor BOOLEAN DEFAULT true",
+            "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS use_ws_monitor BOOLEAN DEFAULT false",
         ]
         for stmt in migrations:
             await conn.execute(text(stmt))

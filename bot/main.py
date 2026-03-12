@@ -18,6 +18,7 @@ from bot.handlers.deposit import get_deposit_handlers
 from bot.handlers.menu import get_menu_handlers
 from bot.handlers.withdraw import get_withdraw_handler
 from bot.services.monitor import MultiMasterMonitor
+from bot.services.clob_ws_monitor import ClobWsMonitor, RawWsEvent
 from bot.services.copytrade import CopyTradeEngine
 from bot.services.rate_limiter import init_rate_limiter
 from bot.services.scheduler import (
@@ -104,10 +105,21 @@ async def main() -> None:
 
     engine = CopyTradeEngine(telegram_bot=app.bot)
 
+    # Monitor Gamma (positions) — conservé comme source principale
     monitor = MultiMasterMonitor(
         poll_interval=settings.monitor_poll_interval,
         on_signal=engine.handle_signal,
     )
+
+    # Callback WebSocket : sur chaque trade CLOB, on déclenche un check Gamma
+    # immédiat pour réduire la latence de détection des mouvements des masters.
+
+    async def handle_ws_event(evt: RawWsEvent) -> None:
+        if evt.type == "last_trade_price":
+            await monitor.fast_check_all_wallets()
+
+    # Monitor WebSocket CLOB — fondation pour le temps réel
+    clob_ws_monitor = ClobWsMonitor(on_event=handle_ws_event)
 
     scheduler = setup_scheduler(monitor)
     scheduler.start()
@@ -124,6 +136,10 @@ async def main() -> None:
         f"({len(monitor.watched_wallets)} wallet(s) watched)."
     )
 
+    # Démarrer le monitor WebSocket en parallèle (ne génère pour l'instant
+    # que des logs, sans impacter le moteur de copie).
+    await clob_ws_monitor.start()
+
     logger.info("Bot is fully running. Press Ctrl+C to stop.")
 
     stop_event = asyncio.Event()
@@ -135,6 +151,7 @@ async def main() -> None:
         logger.info("Shutting down...")
         scheduler.shutdown(wait=False)
         await monitor.stop()
+        await clob_ws_monitor.stop()
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
