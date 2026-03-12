@@ -1,6 +1,6 @@
 """SQLAlchemy base model and common utilities."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import DateTime
@@ -23,4 +23,5 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Return a naive UTC datetime compatible with TIMESTAMP WITHOUT TIME ZONE."""
+    return datetime.utcnow()

@@ -67,18 +67,23 @@ class CopyTradeEngine:
             f"{len(followers)} follower(s) for {signal.master_wallet[:10]}..."
         )
 
+        # Estimate master portfolio value once per signal for proportional sizing
+        master_portfolio_usdc = await self._compute_master_portfolio(
+            signal.master_wallet
+        )
+
         # Allow a relatively high degree of parallelism for fast copying
         semaphore = asyncio.Semaphore(settings.max_concurrent_trades)
 
         async def process_with_limit(user: User):
             async with semaphore:
-                await self._process_follower(user, signal)
+                await self._process_follower(user, signal, master_portfolio_usdc)
 
         tasks = [process_with_limit(f) for f in followers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _process_follower(
-        self, user: User, signal: TradeSignal
+        self, user: User, signal: TradeSignal, master_portfolio_usdc: float
     ) -> None:
         """Process a trade signal for a single follower."""
         trade_id = f"ct-{uuid.uuid4().hex[:12]}"
@@ -93,7 +98,7 @@ class CopyTradeEngine:
 
                 user_settings = await get_or_create_settings(session, user)
 
-                if not self._passes_filters(user_settings, signal):
+                if not await self._passes_filters(user_settings, signal):
                     logger.debug(f"User {user.telegram_id}: signal filtered out")
                     return
 
@@ -113,21 +118,21 @@ class CopyTradeEngine:
                     gross_amount = calculate_trade_size(
                         user_settings,
                         master_amount_usdc=signal.size * signal.price,
-                        master_portfolio_usdc=self._master_portfolio_usdc,
+                        master_portfolio_usdc=master_portfolio_usdc,
                         current_balance_usdc=balance,
                     )
                 except SizingError as e:
                     logger.warning(f"User {user.telegram_id} sizing error: {e}")
                     return
 
-                # For real trading, ensure the user has enough USDC and POL for gas
+                # For real trading: balance checks + one-time Polymarket approval
                 if not user.paper_trading:
                     if gross_amount > onchain_balance + 1e-6:
                         await self._notify_error(
                             user,
                             signal,
                             "Solde USDC insuffisant pour copier ce trade. "
-                            "Déposez des fonds via /deposit.",
+                        "Déposez des fonds via le bouton « 💳 Déposer » du menu principal.",
                         )
                         return
 
@@ -143,6 +148,26 @@ class CopyTradeEngine:
                         )
                         return
 
+                    # One-time: approve USDC for Polymarket contracts
+                    if not user.polymarket_approved:
+                        pk = decrypt_private_key(
+                            user.encrypted_private_key,
+                            settings.encryption_key,
+                            user.uuid,
+                        )
+                        approved = await polymarket_client.ensure_allowances(pk)
+                        del pk
+                        if not approved:
+                            await self._notify_error(
+                                user,
+                                signal,
+                                "Échec de l'approbation USDC pour Polymarket. "
+                                "Vérifiez que vous avez assez de POL pour le gas.",
+                            )
+                            return
+                        user.polymarket_approved = True
+                        await session.commit()
+
                 try:
                     fee_result = calculate_fee(gross_amount)
                 except FeeCalculationError as e:
@@ -150,7 +175,13 @@ class CopyTradeEngine:
                     return
 
                 if self._needs_confirmation(user_settings, gross_amount):
-                    pass  # TODO: confirmation flow
+                    await self._notify_error(
+                        user,
+                        signal,
+                        "Trade ignoré car au-dessus de votre seuil de confirmation. "
+                        "Réduisez le montant ou le seuil dans les « ⚙️ Paramètres » pour qu'il soit copié automatiquement.",
+                    )
+                    return
 
                 # Create trade record
                 side = TradeSide.BUY if signal.side == "BUY" else TradeSide.SELL
@@ -296,12 +327,68 @@ class CopyTradeEngine:
                 exc_info=True,
             )
 
-    def _passes_filters(self, user_settings, signal: TradeSignal) -> bool:
-        """Check if a signal passes the user's filters."""
+    async def _passes_filters(self, user_settings, signal: TradeSignal) -> bool:
+        """Check if a signal passes the user's filters (blacklist, categories, expiry)."""
+        # Market blacklist
         if user_settings.blacklisted_markets:
             if signal.market_id in user_settings.blacklisted_markets:
                 return False
+
+        needs_market_meta = bool(
+            (user_settings.categories and len(user_settings.categories) > 0)
+            or user_settings.max_expiry_days
+        )
+        if not needs_market_meta:
+            return True
+
+        market = await polymarket_client.get_market_by_condition_id(signal.market_id)
+        if not market:
+            # If we can't resolve market metadata, don't block the trade
+            logger.warning(
+                f"Could not fetch market metadata for {signal.market_id[:10]}..., "
+                "skipping category/expiry filters."
+            )
+            return True
+
+        # Category filter
+        if user_settings.categories:
+            if not market.category or market.category not in user_settings.categories:
+                return False
+
+        # Max expiry filter
+        if user_settings.max_expiry_days and market.end_date:
+            try:
+                end_str = market.end_date
+                if end_str.endswith("Z"):
+                    end_str = end_str[:-1] + "+00:00"
+                end_dt = datetime.fromisoformat(end_str)
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                delta_days = (end_dt - now).days
+                if delta_days > user_settings.max_expiry_days:
+                    return False
+            except Exception as e:
+                logger.warning(
+                    f"Failed to parse market end_date '{market.end_date}' "
+                    f"for {signal.market_id[:10]}...: {e}"
+                )
+
         return True
+
+    async def _compute_master_portfolio(self, master_wallet: str) -> float:
+        """Estimate the master's portfolio value in USDC from current positions."""
+        try:
+            positions = await polymarket_client.get_positions_by_address(master_wallet)
+            total = sum(p.size * p.current_price for p in positions)
+            if total <= 0:
+                return self._master_portfolio_usdc
+            return total
+        except Exception as e:
+            logger.error(
+                f"Failed to compute master portfolio for {master_wallet[:10]}...: {e}"
+            )
+            return self._master_portfolio_usdc
 
     def _needs_confirmation(
         self, user_settings, amount: float
@@ -337,8 +424,8 @@ class CopyTradeEngine:
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("📊 Positions", callback_data="cmd_positions"),
-                InlineKeyboardButton("⚙️ Paramètres", callback_data="cmd_settings"),
+                InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
+                InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
             ],
         ])
 

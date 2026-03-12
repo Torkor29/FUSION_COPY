@@ -13,8 +13,10 @@ from bot.handlers.settings import get_settings_handler
 from bot.handlers.balance import get_balance_handlers
 from bot.handlers.controls import get_control_handlers
 from bot.handlers.admin import get_admin_handlers
-from bot.handlers.bridge import get_bridge_handler
-from bot.handlers.deposit import get_deposit_handler
+from bot.handlers.bridge import get_bridge_handler, get_bridge_callbacks
+from bot.handlers.deposit import get_deposit_handlers
+from bot.handlers.menu import get_menu_handlers
+from bot.handlers.withdraw import get_withdraw_handler
 from bot.services.monitor import MultiMasterMonitor
 from bot.services.copytrade import CopyTradeEngine
 from bot.services.rate_limiter import init_rate_limiter
@@ -38,8 +40,14 @@ def build_application() -> Application:
     app.add_handler(get_start_handler())
     app.add_handler(get_settings_handler())
     app.add_handler(get_bridge_handler())
-    app.add_handler(get_deposit_handler())
+    for handler in get_bridge_callbacks():
+        app.add_handler(handler)
+    app.add_handler(get_withdraw_handler())
+    for handler in get_deposit_handlers():
+        app.add_handler(handler)
 
+    for handler in get_menu_handlers():
+        app.add_handler(handler)
     for handler in get_balance_handlers():
         app.add_handler(handler)
     for handler in get_control_handlers():

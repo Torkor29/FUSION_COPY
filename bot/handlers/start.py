@@ -29,13 +29,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         user = await get_user_by_telegram_id(session, tg_user.id)
 
         if user:
+            status = "🟢 Actif" if user.is_active and not user.is_paused else "🟡 Pause" if user.is_paused else "🔴 Inactif"
+            mode = "📝 Paper" if user.paper_trading else "💵 Réel"
+            wallet_short = f"`{user.wallet_address[:6]}...{user.wallet_address[-4:]}`" if user.wallet_address else "Non configuré"
+
+            us = None
+            if user.settings:
+                us = user.settings
+            traders_count = len(us.followed_wallets) if us and us.followed_wallets else 0
+
+            text = (
+                f"👋 **{tg_user.first_name}** — Menu principal\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📬 Wallet : {wallet_short}\n"
+                f"{status} • {mode} • **{traders_count}** trader(s) suivi(s)\n"
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("💰 Soldes", callback_data="menu_balance"),
+                    InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
+                ],
+                [
+                    InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
+                    InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
+                ],
+                [
+                    InlineKeyboardButton("👥 Traders suivis", callback_data="menu_traders"),
+                    InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
+                ],
+                [
+                    InlineKeyboardButton("🌉 Bridge", callback_data="menu_bridge"),
+                    InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
+                ],
+                [
+                    InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
+                ],
+            ]
+
             await update.message.reply_text(
-                f"🔄 Bon retour, **{tg_user.first_name}** !\n\n"
-                f"🆔 ID : `{user.uuid}`\n"
-                f"📊 Statut : {'🟢 Actif' if user.is_active and not user.is_paused else '🟡 En pause' if user.is_paused else '🔴 Inactif'}\n"
-                f"💰 Mode : {'📝 Paper Trading' if user.paper_trading else '💵 Trading réel'}\n\n"
-                "Utilisez /settings pour configurer, /balance pour voir vos soldes.",
+                text,
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
             return ConversationHandler.END
 
@@ -68,16 +103,17 @@ async def onboard_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     ]
     await query.edit_message_text(
         "📖 **Comment ça marche ?**\n\n"
-        "1️⃣ Vous fournissez votre adresse wallet Polygon\n"
-        "2️⃣ Vous fournissez votre clé privée (chiffrée immédiatement)\n"
-        "3️⃣ Vous configurez vos paramètres de copie\n"
-        "4️⃣ Les trades du master sont copiés automatiquement\n\n"
+        "1️⃣ Vous configurez un wallet Polygon (créé par le bot ou le vôtre)\n"
+        "2️⃣ Vous déposez des USDC dessus (carte, exchange ou bridge)\n"
+        "3️⃣ Vous choisissez quels traders copier\n"
+        "4️⃣ Les trades sont copiés automatiquement\n\n"
         "🔐 **Sécurité :**\n"
         "• Clé privée chiffrée AES-256-GCM\n"
         "• Déchiffrée uniquement en mémoire pour signer\n"
         "• Jamais loguée ni exposée\n\n"
         "💸 **Frais :** 1% prélevé sur chaque trade copié\n"
-        "📝 Vous commencez en Paper Trading par défaut",
+        "📝 Vous commencez en Paper Trading par défaut\n"
+        "💸 Vous pouvez retirer vos fonds à tout moment depuis le bouton « 💸 Retirer » du menu.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -105,10 +141,18 @@ async def onboard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     await query.edit_message_text(
         "🧭 **Configuration du wallet**\n\n"
-        "Choisissez comment configurer votre wallet Polygon pour trader sur Polymarket :\n\n"
-        "• **Créer un wallet** — le bot génère une adresse Polygon pour vous.\n"
-        "• **J'ai déjà un wallet** — vous utilisez une adresse 0x… existante.\n\n"
-        "Vous pourrez ensuite déposer des USDC dessus pour commencer à copier les trades.",
+        "Le bot a besoin d'un wallet Polygon pour passer des ordres "
+        "sur Polymarket en votre nom. Deux options :\n\n"
+        "🆕 **Créer un wallet** (recommandé si débutant)\n"
+        "→ Le bot génère un nouveau wallet Polygon pour vous.\n"
+        "→ Il sera vide : vous devrez y déposer des USDC ensuite "
+        "(par carte bancaire, depuis un exchange, ou via bridge).\n"
+        "→ Vous n'avez PAS besoin de MetaMask ou autre app.\n\n"
+        "📩 **J'ai déjà un wallet Polygon** (utilisateurs avancés)\n"
+        "→ Vous avez un wallet Polygon (MetaMask, etc.) avec des USDC dessus.\n"
+        "→ Vous fournissez l'adresse + la clé privée (chiffrée immédiatement).\n"
+        "→ Le bot utilise directement les USDC déjà présents.\n"
+        "→ Vous pouvez aussi bridger du SOL/ETH vers ce wallet.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -149,9 +193,7 @@ async def onboard_create_wallet(
     private_key = account.key.hex()
 
     async with async_session() as session:
-        # Create user
         user = await create_user(session, tg_user.id, username=tg_user.username)
-        # Encrypt and save generated wallet
         await save_wallet(
             session,
             user,
@@ -159,18 +201,21 @@ async def onboard_create_wallet(
             private_key=private_key,
             chain="polygon",
         )
+        user.wallet_auto_created = True
+        await session.commit()
 
-    # Do NOT keep private_key around longer than necessary
     del private_key
 
     await query.edit_message_text(
         "🎉 **Wallet Polygon créé !**\n\n"
         f"📬 Adresse : `{wallet_address}`\n\n"
-        "Pour copier des trades, vous devez déposer des **USDC sur Polygon** "
-        "sur cette adresse.\n\n"
-        "✅ Prochaines étapes :\n"
-        "• Utilisez /deposit pour voir comment déposer des USDC\n"
-        "• Utilisez /settings pour choisir quels traders copier",
+        "⚠️ **Ce wallet est vide.** Pour copier des trades, "
+        "vous devez d'abord y déposer des **USDC**.\n\n"
+        "Depuis le menu principal, utilisez « 💳 Déposer » — le bot vous guide pour :\n"
+        "• 💳 Acheter des USDC par carte bancaire\n"
+        "• 🏦 Envoyer depuis un exchange (Binance, etc.)\n"
+        "• 🌉 Bridger du SOL ou de l'ETH vers ce wallet\n\n"
+        "Puis cliquez sur « ⚙️ Paramètres » pour choisir quels traders copier.",
         parse_mode="Markdown",
     )
 
@@ -271,23 +316,25 @@ async def onboard_confirm(
         return ConversationHandler.END
 
     async with async_session() as session:
-        # Create user
         user = await create_user(
             session, tg_user.id, username=tg_user.username
         )
-        # Encrypt and save wallet
         await save_wallet(session, user, wallet_address, private_key, chain="polygon")
+        user.wallet_auto_created = False
+        await session.commit()
 
         await query.edit_message_text(
             "🎉 **Inscription réussie !**\n\n"
             f"🆔 Votre ID : `{user.uuid}`\n"
-            f"📬 Wallet : `{wallet_address[:6]}...{wallet_address[-4:]}`\n"
+            f"📬 Wallet importé : `{wallet_address[:6]}...{wallet_address[-4:]}`\n"
             "🔒 Clé privée : chiffrée AES-256 ✅\n"
             "📝 Mode : Paper Trading\n\n"
+            "💡 Le bot utilisera les USDC déjà présents sur ce wallet. "
+            "Vous pouvez aussi déposer plus de fonds via le bouton « 💳 Déposer ».\n\n"
             "**Prochaines étapes :**\n"
-            "• /settings — Configurer vos paramètres de copie\n"
-            "• /balance — Voir vos soldes\n"
-            "• /help — Aide complète",
+            "• Bouton « 💰 Soldes » — Voir vos soldes actuels\n"
+            "• Bouton « ⚙️ Paramètres » — Choisir quels traders copier\n"
+            "• Bouton « 💳 Déposer » — Ajouter des fonds si besoin",
             parse_mode="Markdown",
         )
 

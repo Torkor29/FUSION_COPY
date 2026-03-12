@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     max_concurrent_trades: int = Field(default=20, ge=1, le=200)
     collect_fees_onchain: bool = False
 
+    # Polygon / Web3
+    # RPC dédié pour Polygon (Alchemy, QuickNode, Ankr, etc.)
+    # Exemple : https://polygon-mainnet.g.alchemy.com/v2/VOTRE_CLE
+    polygon_rpc_url: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

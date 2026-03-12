@@ -31,6 +31,7 @@ class User(Base):
 
     # Wallet info
     wallet_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    wallet_auto_created: Mapped[bool] = mapped_column(Boolean, default=False)
     # Encrypted private key (AES-256-GCM) — NEVER stored in plaintext
     encrypted_private_key: Mapped[Optional[bytes]] = mapped_column(nullable=True)
     # Solana wallet (for bridging)
@@ -41,6 +42,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     paper_trading: Mapped[bool] = mapped_column(Boolean, default=True)
+    polymarket_approved: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Limits
     daily_limit_usdc: Mapped[float] = mapped_column(Float, default=1000.0)

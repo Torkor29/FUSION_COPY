@@ -81,12 +81,15 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         keyboard = [
             [
-                InlineKeyboardButton("📊 Positions", callback_data="cmd_positions"),
-                InlineKeyboardButton("📜 Historique", callback_data="cmd_history"),
+                InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
+                InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
             ],
             [
-                InlineKeyboardButton("🌉 Bridge SOL", callback_data="cmd_bridge"),
-                InlineKeyboardButton("⚙️ Paramètres", callback_data="cmd_settings"),
+                InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
+                InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
+            ],
+            [
+                InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back"),
             ],
         ]
 

@@ -44,6 +44,10 @@ class OrderResult:
 class PolymarketClient:
     """Wrapper for Polymarket public and trading APIs."""
 
+    def __init__(self) -> None:
+        # Cache markets by conditionId (market_id)
+        self._market_cache: dict[str, MarketInfo] = {}
+
     def create_user_client(self, private_key: str) -> "ClobClient":
         """Create a CLOB client for a specific user (follower) to sign orders."""
         from py_clob_client.client import ClobClient
@@ -56,6 +60,29 @@ class PolymarketClient:
         creds = client.create_or_derive_api_creds()
         client.set_api_creds(creds)
         return client
+
+    async def ensure_allowances(self, private_key: str) -> bool:
+        """Set all ERC-20/ERC-1155 token approvals required by Polymarket.
+
+        Uses py_clob_client's built-in method when available, with manual
+        fallback through PolygonClient.
+        """
+        try:
+            client = self.create_user_client(private_key)
+            client.set_allowances()
+            logger.info("Polymarket allowances set via py_clob_client")
+            return True
+        except Exception as e:
+            logger.warning(
+                f"py_clob_client set_allowances failed ({e}), using manual approval"
+            )
+            from bot.services.web3_client import polygon_client
+            from web3 import Web3
+
+            account = Web3().eth.account.from_key(private_key)
+            return await polygon_client.ensure_polymarket_approvals(
+                account.address, private_key
+            )
 
     async def get_positions_by_address(self, wallet_address: str) -> list[Position]:
         """Fetch positions for any public wallet address via the Gamma API.
@@ -117,14 +144,14 @@ class PolymarketClient:
                 resp.raise_for_status()
                 data = resp.json()
 
-            markets = []
+            markets: list[MarketInfo] = []
             for m in data:
                 tokens = []
                 for t in m.get("clobTokenIds", "").split(","):
                     if t.strip():
                         tokens.append({"token_id": t.strip()})
 
-                markets.append(MarketInfo(
+                mi = MarketInfo(
                     market_id=m.get("conditionId", ""),
                     question=m.get("question", ""),
                     slug=m.get("slug", ""),
@@ -132,13 +159,39 @@ class PolymarketClient:
                     active=m.get("active", False),
                     end_date=m.get("endDate"),
                     category=m.get("groupItemTitle"),
-                ))
+                )
+                markets.append(mi)
+                if mi.market_id:
+                    self._market_cache[mi.market_id] = mi
 
             return markets
 
         except Exception as e:
             logger.error(f"Failed to fetch markets: {e}")
             return []
+
+    async def get_market_by_condition_id(
+        self, condition_id: str
+    ) -> Optional[MarketInfo]:
+        """Return MarketInfo for a given conditionId (market_id), with caching.
+
+        Falls back to fetching a batch of markets when not cached.
+        """
+        if not condition_id:
+            return None
+
+        cached = self._market_cache.get(condition_id)
+        if cached:
+            return cached
+
+        # Fetch a reasonably large batch of active markets and populate cache
+        markets = await self.get_markets(limit=500)
+        for m in markets:
+            if m.market_id == condition_id:
+                self._market_cache[condition_id] = m
+                return m
+
+        return None
 
     async def place_order(
         self,

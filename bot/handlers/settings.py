@@ -40,79 +40,144 @@ SETTING_LABELS = {
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show main settings menu."""
+    """Afficher le menu principal des paramètres.
+
+    Fonctionne à la fois via /settings et via le bouton \"⚙️ Paramètres\" du menu.
+    """
     tg_user = update.effective_user
 
     async with async_session() as session:
         user = await get_user_by_telegram_id(session, tg_user.id)
         if not user:
-            await update.message.reply_text(
-                "❌ Compte non trouvé. Utilisez /start pour vous inscrire."
-            )
+            # Commande directe
+            if update.message:
+                await update.message.reply_text(
+                    "❌ Compte non trouvé. Utilisez /start pour vous inscrire."
+                )
+            else:
+                # Depuis un callback, on édite simplement le message courant
+                query = update.callback_query
+                if query:
+                    await query.answer()
+                    await query.edit_message_text(
+                        "❌ Compte non trouvé. Utilisez /start pour vous inscrire."
+                    )
             return ConversationHandler.END
 
         us = await get_or_create_settings(session, user)
         text, keyboard = _build_main_menu(us, user.paper_trading)
 
-    await update.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    # Si on vient d'une commande /settings
+    if update.message:
+        await update.message.reply_text(
+            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        # Si on vient du bouton \"⚙️ Paramètres\" (callback menu_settings)
+        query = update.callback_query
+        if query:
+            await query.answer()
+            await query.edit_message_text(
+                text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
     return MAIN_MENU
 
 
 def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
-    """Build the settings display text and keyboard."""
+    """Build the settings display text and keyboard.
+
+    On met en avant le paramètre clé selon le mode de sizing.
+    """
     mode_display = {
-        SizingMode.FIXED: "Fixe",
-        SizingMode.PERCENT: "% Capital",
-        SizingMode.PROPORTIONAL: "Proportionnel",
-        SizingMode.KELLY: "Kelly",
+        SizingMode.FIXED: "Fixe (montant par trade)",
+        SizingMode.PERCENT: "% du capital",
+        SizingMode.PROPORTIONAL: "Proportionnel au master",
+        SizingMode.KELLY: "Kelly (avancé)",
     }
 
     wallets = us.followed_wallets or []
     wallet_display = f"**{len(wallets)}** trader(s)" if wallets else "**Aucun**"
+
+    # Ligne descriptive principale selon le mode
+    if us.sizing_mode == SizingMode.FIXED:
+        sizing_line = (
+            f"📊 Mode de sizing       : **Fixe** — "
+            f"**{us.fixed_amount:.2f} USDC** par trade\n"
+        )
+    elif us.sizing_mode == SizingMode.PERCENT:
+        sizing_line = (
+            f"📊 Mode de sizing       : **% du capital** — "
+            f"**{us.percent_per_trade:.2f}%** de {us.allocated_capital:.2f} USDC\n"
+        )
+    elif us.sizing_mode == SizingMode.PROPORTIONAL:
+        sizing_line = (
+            "📊 Mode de sizing       : **Proportionnel au master**\n"
+            f"   → Multiplicateur      : **{us.multiplier}x**\n"
+        )
+    else:  # Kelly ou autre
+        sizing_line = (
+            "📊 Mode de sizing       : **Kelly (avancé)**\n"
+            f"   → Multiplicateur      : **{us.multiplier}x**\n"
+        )
 
     text = (
         "⚙️ **PARAMÈTRES DE COPYTRADE**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Traders suivis       : {wallet_display}\n"
         f"💰 Capital alloué       : **{us.allocated_capital:.2f} USDC**\n"
-        f"📊 Mode de sizing       : **{mode_display.get(us.sizing_mode, us.sizing_mode)}**\n"
-        f"🎚️ Multiplicateur       : **{us.multiplier}x**\n"
-        f"🛑 Stop-loss global     : **{us.stop_loss_pct}%**\n"
-        f"✅ Mise max par trade   : **{us.max_trade_usdc:.2f} USDC**\n"
-        f"❌ Mise min par trade   : **{us.min_trade_usdc:.2f} USDC**\n"
+        f"{sizing_line}"
+        f"🛑 Stop-loss global     : **{us.stop_loss_pct}%** "
+        "(optionnel, sur la perte TOTALE)\n"
+        f"✅ Mise max (sécurité)  : **{us.max_trade_usdc:.2f} USDC**\n"
+        f"❌ Mise min (sécurité)  : **{us.min_trade_usdc:.2f} USDC**\n"
         f"⏱️ Délai de copie       : **{us.copy_delay_seconds}s**\n"
         f"🔔 Confirmation manuelle: **{'Oui' if us.manual_confirmation else 'Non'}**\n"
         f"🌉 Auto-bridge SOL     : **{'Activé' if us.auto_bridge_sol else 'Désactivé'}**\n"
         f"📝 Paper Trading        : **{'Oui' if paper_trading else 'Non'}**\n"
     )
 
-    keyboard = [
+    keyboard: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton("👤 Gérer les traders suivis", callback_data="set_followed")],
         [
             InlineKeyboardButton("💰 Capital", callback_data="set_allocated_capital"),
-            InlineKeyboardButton("📊 Sizing", callback_data="set_sizing_mode"),
+            InlineKeyboardButton("📊 Mode de sizing", callback_data="set_sizing_mode"),
         ],
-        [
-            InlineKeyboardButton("🎚️ Multiplic.", callback_data="set_multiplier"),
-            InlineKeyboardButton("🛑 Stop-loss", callback_data="set_stop_loss_pct"),
-        ],
-        [
-            InlineKeyboardButton("✅ Max trade", callback_data="set_max_trade_usdc"),
-            InlineKeyboardButton("❌ Min trade", callback_data="set_min_trade_usdc"),
-        ],
-        [
-            InlineKeyboardButton("⏱️ Délai", callback_data="set_copy_delay_seconds"),
-            InlineKeyboardButton("🔔 Confirm.", callback_data="set_manual_confirmation"),
-        ],
-        [
-            InlineKeyboardButton("🌉 Bridge SOL", callback_data="set_auto_bridge_sol"),
-            InlineKeyboardButton("📝 Paper Mode", callback_data="set_paper_trading"),
-        ],
-        [InlineKeyboardButton("⚙️ Avancé", callback_data="set_advanced")],
-        [InlineKeyboardButton("✅ Fermer", callback_data="set_close")],
     ]
+
+    # Bouton dédié pour régler le montant clé selon le mode choisi
+    if us.sizing_mode == SizingMode.FIXED:
+        keyboard.append(
+            [InlineKeyboardButton("💵 Montant fixe par trade", callback_data="set_fixed_amount")]
+        )
+    elif us.sizing_mode == SizingMode.PERCENT:
+        keyboard.append(
+            [InlineKeyboardButton("📈 % du capital par trade", callback_data="set_percent_per_trade")]
+        )
+
+    # Reste des paramètres de risque / comportement
+    keyboard.extend(
+        [
+            [
+                InlineKeyboardButton("🛑 Stop-loss global", callback_data="set_stop_loss_pct"),
+                InlineKeyboardButton("🔔 Confirm.", callback_data="set_manual_confirmation"),
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅/❌ Bornes par trade", callback_data="set_advanced_limits"
+                ),
+            ],
+            [
+                InlineKeyboardButton("⏱️ Délai copie", callback_data="set_copy_delay_seconds"),
+            ],
+            [
+                InlineKeyboardButton("🌉 Bridge SOL", callback_data="set_auto_bridge_sol"),
+                InlineKeyboardButton("📝 Paper Mode", callback_data="set_paper_trading"),
+            ],
+            [InlineKeyboardButton("⚙️ Avancé", callback_data="set_advanced")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="set_close")],
+        ]
+    )
     return text, keyboard
 
 
@@ -125,7 +190,10 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     field = data.replace("set_", "")
 
     if field == "close":
-        await query.edit_message_text("✅ Paramètres fermés.")
+        # Retour direct au menu principal global pour simplifier la navigation
+        from bot.handlers.menu import _send_main_menu
+
+        await _send_main_menu(query.message, query.from_user)
         return ConversationHandler.END
 
     if field == "advanced":
@@ -142,6 +210,29 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ]
         await query.edit_message_text(
             "⚙️ **Paramètres avancés**\n\nSélectionnez un paramètre à modifier :",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "advanced_limits":
+        # Sous-menu dédié aux bornes min/max par trade pour plus de clarté
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Mise max (sécurité)", callback_data="set_max_trade_usdc"),
+            ],
+            [
+                InlineKeyboardButton("❌ Mise min (sécurité)", callback_data="set_min_trade_usdc"),
+            ],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+        await query.edit_message_text(
+            "📏 **Bornes de mise par trade**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Ces limites s'appliquent quel que soit le mode de sizing :\n\n"
+            "• **Mise max** : plafonne la taille d'un trade (sécurité haute).\n"
+            "• **Mise min** : évite les micro-trades trop petits.\n\n"
+            "Elles viennent en plus du montant fixe / % que vous avez choisi.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -278,7 +369,7 @@ async def follow_add_receive(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not address.startswith("0x") or len(address) != 42:
         await update.message.reply_text(
             "❌ Adresse invalide. Elle doit commencer par `0x` et faire 42 caractères.\n\n"
-            "Réessayez ou envoyez /settings pour annuler.",
+            "Réessayez ou cliquez sur « ⚙️ Paramètres » dans le menu principal pour annuler.",
             parse_mode="Markdown",
         )
         return ADD_WALLET
@@ -458,7 +549,11 @@ async def settings_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 def get_settings_handler() -> ConversationHandler:
     """Build the /settings conversation handler."""
     return ConversationHandler(
-        entry_points=[CommandHandler("settings", settings_command)],
+        entry_points=[
+            CommandHandler("settings", settings_command),
+            # Permet d'ouvrir les paramètres directement depuis le bouton du menu principal
+            CallbackQueryHandler(settings_command, pattern="^menu_settings$"),
+        ],
         states={
             MAIN_MENU: [
                 CallbackQueryHandler(followed_menu, pattern="^set_followed$"),

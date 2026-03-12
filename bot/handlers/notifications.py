@@ -47,7 +47,8 @@ def format_trade_error(
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 Marché : \"{market_question}\"\n"
         f"❌ Erreur : {error_message}\n\n"
-        "Le trade n'a pas été exécuté. Vérifiez vos paramètres avec /settings."
+        "Le trade n'a pas été exécuté. Vérifiez vos paramètres via le bouton "
+        "« ⚙️ Paramètres » du menu principal."
     )
 
 
