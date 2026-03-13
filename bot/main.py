@@ -140,6 +140,22 @@ async def main() -> None:
     # que des logs, sans impacter le moteur de copie).
     await clob_ws_monitor.start()
 
+    # Start web dashboard (FastAPI) if enabled
+    dashboard_server = None
+    if settings.dashboard_enabled:
+        import uvicorn
+        from bot.web.app import app as dashboard_app
+
+        config = uvicorn.Config(
+            dashboard_app,
+            host="0.0.0.0",
+            port=settings.dashboard_port,
+            log_level="warning",
+        )
+        dashboard_server = uvicorn.Server(config)
+        asyncio.create_task(dashboard_server.serve())
+        logger.info(f"Dashboard started on http://0.0.0.0:{settings.dashboard_port}")
+
     logger.info("Bot is fully running. Press Ctrl+C to stop.")
 
     stop_event = asyncio.Event()
@@ -149,6 +165,8 @@ async def main() -> None:
         pass
     finally:
         logger.info("Shutting down...")
+        if dashboard_server:
+            dashboard_server.should_exit = True
         scheduler.shutdown(wait=False)
         await monitor.stop()
         await clob_ws_monitor.stop()

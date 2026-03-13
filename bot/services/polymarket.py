@@ -1,10 +1,14 @@
 """Polymarket API wrapper — market data, public positions, and order execution."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 2
+RETRY_BACKOFF_S = 1.0
 
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_HOST = "https://gamma-api.polymarket.com"
@@ -88,45 +92,56 @@ class PolymarketClient:
         """Fetch positions for any public wallet address via the Gamma API.
 
         No private key or API credentials needed — this is public data.
+        Retries up to MAX_RETRIES times on network errors.
         """
         import httpx
 
-        try:
-            async with httpx.AsyncClient(timeout=15) as http:
-                resp = await http.get(
-                    f"{GAMMA_HOST}/positions",
-                    params={"user": wallet_address.lower()},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+        last_err: Optional[Exception] = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=15) as http:
+                    resp = await http.get(
+                        f"{GAMMA_HOST}/positions",
+                        params={"user": wallet_address.lower()},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
 
-            positions = []
-            for p in data:
-                size = float(p.get("size", 0))
-                if size <= 0:
-                    continue
+                positions = []
+                for p in data:
+                    size = float(p.get("size", 0))
+                    if size <= 0:
+                        continue
 
-                avg_price = float(p.get("avgPrice", 0))
-                current_price = float(p.get("currentPrice", avg_price))
-                pnl_pct = 0.0
-                if avg_price > 0:
-                    pnl_pct = ((current_price - avg_price) / avg_price) * 100
+                    avg_price = float(p.get("avgPrice", 0))
+                    current_price = float(p.get("currentPrice", avg_price))
+                    pnl_pct = 0.0
+                    if avg_price > 0:
+                        pnl_pct = ((current_price - avg_price) / avg_price) * 100
 
-                positions.append(Position(
-                    market_id=p.get("conditionId", p.get("marketId", "")),
-                    token_id=p.get("asset", p.get("tokenId", "")),
-                    outcome=p.get("outcome", ""),
-                    size=size,
-                    avg_price=avg_price,
-                    current_price=current_price,
-                    pnl_pct=pnl_pct,
-                ))
+                    positions.append(Position(
+                        market_id=p.get("conditionId", p.get("marketId", "")),
+                        token_id=p.get("asset", p.get("tokenId", "")),
+                        outcome=p.get("outcome", ""),
+                        size=size,
+                        avg_price=avg_price,
+                        current_price=current_price,
+                        pnl_pct=pnl_pct,
+                    ))
 
-            return positions
+                return positions
 
-        except Exception as e:
-            logger.error(f"Failed to fetch positions for {wallet_address[:10]}...: {e}")
-            return []
+            except Exception as e:
+                last_err = e
+                if attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"Retry {attempt + 1}/{MAX_RETRIES} fetching positions "
+                        f"for {wallet_address[:10]}...: {e}"
+                    )
+                    await asyncio.sleep(RETRY_BACKOFF_S * (attempt + 1))
+
+        logger.error(f"Failed to fetch positions for {wallet_address[:10]}...: {last_err}")
+        return []
 
     async def get_markets(
         self, limit: int = 50, category: Optional[str] = None
@@ -241,37 +256,56 @@ class PolymarketClient:
         side: str,
         amount_usdc: float,
     ) -> OrderResult:
-        """Place a market (FOK) order — fill immediately at best price."""
-        try:
-            from py_clob_client.clob_types import MarketOrderArgs, OrderType
+        """Place a market (FOK) order — fill immediately at best price.
 
-            client = self.create_user_client(private_key)
+        Retries up to MAX_RETRIES times on network/transient errors.
+        """
+        last_err: Optional[str] = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                from py_clob_client.clob_types import MarketOrderArgs, OrderType
 
-            order_args = MarketOrderArgs(
-                token_id=token_id,
-                amount=amount_usdc,
-                side=side,
-            )
+                client = self.create_user_client(private_key)
 
-            signed_order = client.create_market_order(order_args)
-            result = client.post_order(signed_order, order_type=OrderType.FOK)
-
-            if result and result.get("orderID"):
-                return OrderResult(
-                    success=True,
-                    order_id=result["orderID"],
-                    filled_size=float(result.get("filledSize", 0)),
-                    avg_price=float(result.get("avgPrice", 0)),
-                )
-            else:
-                return OrderResult(
-                    success=False,
-                    error=result.get("errorMsg", "Order not filled"),
+                order_args = MarketOrderArgs(
+                    token_id=token_id,
+                    amount=amount_usdc,
+                    side=side,
                 )
 
-        except Exception as e:
-            logger.error(f"Failed to place market order: {e}")
-            return OrderResult(success=False, error=str(e))
+                signed_order = client.create_market_order(order_args)
+                result = client.post_order(signed_order, order_type=OrderType.FOK)
+
+                if result and result.get("orderID"):
+                    return OrderResult(
+                        success=True,
+                        order_id=result["orderID"],
+                        filled_size=float(result.get("filledSize", 0)),
+                        avg_price=float(result.get("avgPrice", 0)),
+                    )
+                else:
+                    error_msg = result.get("errorMsg", "Order not filled") if result else "No response"
+                    last_err = error_msg
+                    if attempt < MAX_RETRIES:
+                        logger.warning(
+                            f"Retry {attempt + 1}/{MAX_RETRIES} market order: {error_msg}"
+                        )
+                        await asyncio.sleep(RETRY_BACKOFF_S * (attempt + 1))
+                        continue
+                    return OrderResult(success=False, error=error_msg)
+
+            except Exception as e:
+                last_err = str(e)
+                if attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"Retry {attempt + 1}/{MAX_RETRIES} market order error: {e}"
+                    )
+                    await asyncio.sleep(RETRY_BACKOFF_S * (attempt + 1))
+                    continue
+                logger.error(f"Failed to place market order after retries: {e}")
+                return OrderResult(success=False, error=str(e))
+
+        return OrderResult(success=False, error=last_err or "Max retries exceeded")
 
     async def cancel_order(self, private_key: str, order_id: str) -> bool:
         """Cancel an open order."""

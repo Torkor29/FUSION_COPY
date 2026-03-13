@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Exemple : https://polygon-mainnet.g.alchemy.com/v2/VOTRE_CLE
     polygon_rpc_url: str = ""
 
+    # Dashboard web
+    dashboard_enabled: bool = True
+    dashboard_port: int = Field(default=8080, ge=1024, le=65535)
+
     # UI / Branding
     # URL d'une bannière (logo) pour le message d'accueil Telegram
     welcome_banner_url: str = ""

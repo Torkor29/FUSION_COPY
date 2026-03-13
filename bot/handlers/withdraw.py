@@ -116,6 +116,15 @@ async def receive_dest_address(
         )
         return DEST_ADDRESS
 
+    # Validate EIP-55 checksum if mixed case
+    from web3 import Web3
+    if not Web3.is_address(address):
+        await update.message.reply_text(
+            "❌ Adresse Ethereum invalide (checksum incorrect). "
+            "Vérifiez l'adresse et réessayez :"
+        )
+        return DEST_ADDRESS
+
     context.user_data["withdraw_dest"] = address
     usdc = context.user_data.get("withdraw_balance", 0)
 

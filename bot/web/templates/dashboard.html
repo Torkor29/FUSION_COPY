@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WENPOLYMARKET - Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --purple: #bc8cff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+/* Header */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+header h1 { font-size: 1.5em; font-weight: 600; }
+header h1 span { color: var(--accent); }
+.refresh-info { color: var(--text-muted); font-size: 0.85em; }
+
+/* Stats cards */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.stat-card .label { color: var(--text-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .value { font-size: 1.6em; font-weight: 700; margin-top: 4px; }
+.stat-card .value.green { color: var(--green); }
+.stat-card .value.red { color: var(--red); }
+.stat-card .value.accent { color: var(--accent); }
+.stat-card .value.purple { color: var(--purple); }
+
+/* Sections */
+.section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.section-header h2 { font-size: 1.1em; font-weight: 600; }
+
+/* Filter buttons */
+.filters { display: flex; gap: 8px; }
+.filter-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.filter-btn:hover { border-color: var(--accent); color: var(--text); }
+.filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 16px; color: var(--text-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; border-bottom: 1px solid var(--border); }
+td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.9em; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(88, 166, 255, 0.04); }
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badge-buy { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.badge-sell { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+.badge-paper { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+
+.mono { font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.85em; }
+.empty-state { padding: 40px; text-align: center; color: var(--text-muted); }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+.spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  table { font-size: 0.85em; }
+  th, td { padding: 8px 10px; }
+  .hide-mobile { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1><span>WEN</span>POLYMARKET <small style="color:var(--text-muted);font-weight:400;">Dashboard</small></h1>
+    <div class="refresh-info">Auto-refresh 60s | <span id="last-update">-</span></div>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card"><div class="label">Trades Aujourd'hui</div><div class="value accent" id="s-today">-</div></div>
+    <div class="stat-card"><div class="label">Trades Semaine</div><div class="value" id="s-week">-</div></div>
+    <div class="stat-card"><div class="label">Volume Aujourd'hui</div><div class="value" id="s-vol-today">-</div></div>
+    <div class="stat-card"><div class="label">Volume Semaine</div><div class="value" id="s-vol-week">-</div></div>
+    <div class="stat-card"><div class="label">Win Rate</div><div class="value green" id="s-winrate">-</div></div>
+    <div class="stat-card"><div class="label">P&L Total</div><div class="value" id="s-pnl">-</div></div>
+    <div class="stat-card"><div class="label">Followers Actifs</div><div class="value purple" id="s-followers">-</div></div>
+    <div class="stat-card"><div class="label">Fees Collected</div><div class="value" id="s-fees">-</div></div>
+  </div>
+
+  <!-- Traders -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Traders Suivis</h2>
+    </div>
+    <div id="traders-content"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- Trades -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Trades Recents</h2>
+      <div class="filters">
+        <button class="filter-btn active" data-period="today" onclick="setPeriod('today')">Aujourd'hui</button>
+        <button class="filter-btn" data-period="week" onclick="setPeriod('week')">Semaine</button>
+        <button class="filter-btn" data-period="all" onclick="setPeriod('all')">Tout</button>
+      </div>
+    </div>
+    <div id="trades-content"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<script>
+let currentPeriod = 'today';
+let currentMaster = null;
+
+function fmt(n) { return n != null ? n.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'; }
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+async function loadStats() {
+  try {
+    const d = await fetchJSON('/api/dashboard');
+    document.getElementById('s-today').textContent = d.trades_today;
+    document.getElementById('s-week').textContent = d.trades_week;
+    document.getElementById('s-vol-today').textContent = fmt(d.volume_today) + ' USDC';
+    document.getElementById('s-vol-week').textContent = fmt(d.volume_week) + ' USDC';
+    document.getElementById('s-followers').textContent = d.active_followers;
+    document.getElementById('s-fees').textContent = fmt(d.total_fees) + ' USDC';
+
+    const wr = document.getElementById('s-winrate');
+    wr.textContent = d.win_rate != null ? d.win_rate + '%' : 'N/A';
+
+    const pnl = document.getElementById('s-pnl');
+    if (d.total_pnl != null) {
+      pnl.textContent = (d.total_pnl >= 0 ? '+' : '') + fmt(d.total_pnl) + ' USDC';
+      pnl.className = 'value ' + (d.total_pnl >= 0 ? 'green' : 'red');
+    } else {
+      pnl.textContent = 'N/A';
+    }
+  } catch (e) { console.error('Stats error:', e); }
+}
+
+async function loadTraders() {
+  try {
+    const d = await fetchJSON('/api/traders');
+    const el = document.getElementById('traders-content');
+    if (!d.traders.length) {
+      el.innerHTML = '<div class="empty-state">Aucun trader suivi</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>Wallet</th><th>Followers</th><th>Trades</th><th>Volume</th><th></th></tr></thead><tbody>';
+    for (const t of d.traders) {
+      html += `<tr>
+        <td class="mono">${t.wallet_short}</td>
+        <td>${t.follower_count}</td>
+        <td>${t.trade_count}</td>
+        <td>${fmt(t.volume)} USDC</td>
+        <td><button class="filter-btn" onclick="filterByMaster('${t.wallet}')">Voir trades</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch (e) { console.error('Traders error:', e); }
+}
+
+async function loadTrades() {
+  try {
+    let url = `/api/trades?period=${currentPeriod}&limit=50`;
+    if (currentMaster) url += `&master=${currentMaster}`;
+    const d = await fetchJSON(url);
+    const el = document.getElementById('trades-content');
+    if (!d.trades.length) {
+      el.innerHTML = '<div class="empty-state">Aucun trade pour cette periode</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>Date</th><th>Side</th><th>Marche</th><th>Prix</th><th>Montant</th><th class="hide-mobile">Master</th><th class="hide-mobile">Temps</th><th></th></tr></thead><tbody>';
+    for (const t of d.trades) {
+      const dt = new Date(t.created_at);
+      const dateStr = dt.toLocaleDateString('fr-FR', {day:'2-digit',month:'2-digit'}) + ' ' + dt.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+      const sideBadge = t.side === 'BUY'
+        ? '<span class="badge badge-buy">BUY</span>'
+        : '<span class="badge badge-sell">SELL</span>';
+      const paperBadge = t.is_paper ? ' <span class="badge badge-paper">Paper</span>' : '';
+      const question = t.market_question.length > 45 ? t.market_question.slice(0, 42) + '...' : t.market_question;
+      const execTime = t.execution_time_ms ? (t.execution_time_ms / 1000).toFixed(1) + 's' : '-';
+      html += `<tr>
+        <td class="mono">${dateStr}</td>
+        <td>${sideBadge}${paperBadge}</td>
+        <td title="${t.market_question}">${question}</td>
+        <td class="mono">${t.price.toFixed(2)}</td>
+        <td class="mono">${fmt(t.amount)} USDC</td>
+        <td class="mono hide-mobile">${t.master_short}</td>
+        <td class="hide-mobile">${execTime}</td>
+        <td><span class="mono" style="color:var(--text-muted)">${t.fee.toFixed(2)} fee</span></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch (e) { console.error('Trades error:', e); }
+}
+
+function setPeriod(p) {
+  currentPeriod = p;
+  currentMaster = null;
+  document.querySelectorAll('.filter-btn[data-period]').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === p);
+  });
+  loadTrades();
+}
+
+function filterByMaster(wallet) {
+  currentMaster = wallet;
+  currentPeriod = 'all';
+  document.querySelectorAll('.filter-btn[data-period]').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === 'all');
+  });
+  loadTrades();
+}
+
+function updateTimestamp() {
+  document.getElementById('last-update').textContent = new Date().toLocaleTimeString('fr-FR');
+}
+
+async function refreshAll() {
+  await Promise.all([loadStats(), loadTraders(), loadTrades()]);
+  updateTimestamp();
+}
+
+// Initial load
+refreshAll();
+
+// Auto-refresh every 60s
+setInterval(refreshAll, 60000);
+</script>
+</body>
+</html>

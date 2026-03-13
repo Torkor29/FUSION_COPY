@@ -184,7 +184,54 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         ) or 0.0
 
-    win_rate = "N/A"  # TODO: calculate from resolved markets
+        # Win rate: compare BUY avg price vs current SELL prices for same market
+        # Simple approach: count SELL trades where price > avg BUY price
+        from bot.models.trade import TradeSide
+        buy_trades = (await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.status == TradeStatus.FILLED,
+                Trade.side == TradeSide.BUY,
+            )
+        )).scalars().all()
+
+        sell_trades = (await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.status == TradeStatus.FILLED,
+                Trade.side == TradeSide.SELL,
+            )
+        )).scalars().all()
+
+        # P&L estimation: for sells, profit = (sell_price - avg_buy_price) * shares
+        total_pnl = 0.0
+        wins = 0
+        total_closed = 0
+        # Build avg buy price per market
+        buy_avg: dict[str, float] = {}
+        for t in buy_trades:
+            key = t.token_id
+            if key not in buy_avg:
+                buy_avg[key] = t.price
+            else:
+                buy_avg[key] = (buy_avg[key] + t.price) / 2
+
+        for t in sell_trades:
+            key = t.token_id
+            avg_buy = buy_avg.get(key)
+            if avg_buy is not None and avg_buy > 0:
+                pnl = (t.price - avg_buy) * t.shares
+                total_pnl += pnl
+                total_closed += 1
+                if pnl > 0:
+                    wins += 1
+
+        if total_closed > 0:
+            win_rate = f"{(wins / total_closed) * 100:.0f}%"
+            pnl_str = f"{total_pnl:+.2f} USDC"
+        else:
+            win_rate = "N/A"
+            pnl_str = "N/A"
 
     keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
@@ -195,6 +242,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"💰 Volume total     : **{total_volume:.2f} USDC**\n"
         f"💸 Frais payés      : **{total_fees:.2f} USDC**\n"
         f"📊 Win rate         : **{win_rate}**\n"
+        f"📈 P&L estimé       : **{pnl_str}**\n"
         f"📝 Mode             : **{'Paper' if user.paper_trading else 'Réel'}**",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),

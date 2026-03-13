@@ -60,14 +60,17 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
         ],
         [
+            InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
-            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
         ],
         [
+            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
             InlineKeyboardButton("👥 Traders suivis", callback_data="menu_traders"),
-            InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
         ],
-        [InlineKeyboardButton("❓ Aide", callback_data="menu_help")],
+        [
+            InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
+            InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
+        ],
     ])
 
     return text, keyboard

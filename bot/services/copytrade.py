@@ -125,6 +125,34 @@ class CopyTradeEngine:
                     logger.warning(f"User {user.telegram_id} sizing error: {e}")
                     return
 
+                # Daily limit check
+                if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
+                    remaining = max(0, user.daily_limit_usdc - user.daily_spent_usdc)
+                    await self._notify_error(
+                        user,
+                        signal,
+                        f"Limite journalière atteinte ({user.daily_spent_usdc:.2f}/"
+                        f"{user.daily_limit_usdc:.2f} USDC). "
+                        f"Reste disponible : {remaining:.2f} USDC.",
+                    )
+                    return
+
+                # Liquidity / spread check (skip for paper trading)
+                if not user.paper_trading and signal.side == "BUY":
+                    spread = await self._check_spread(signal.token_id)
+                    if spread is not None and spread > 0.05:
+                        logger.warning(
+                            f"User {user.telegram_id}: spread {spread:.1%} too wide "
+                            f"for {signal.token_id[:12]}..., skipping"
+                        )
+                        await self._notify_error(
+                            user,
+                            signal,
+                            f"Trade ignoré : spread trop large ({spread:.1%} > 5%). "
+                            "Le marché manque de liquidité.",
+                        )
+                        return
+
                 # For real trading: balance checks + one-time Polymarket approval
                 if not user.paper_trading:
                     if gross_amount > onchain_balance + 1e-6:
@@ -389,6 +417,24 @@ class CopyTradeEngine:
                 f"Failed to compute master portfolio for {master_wallet[:10]}...: {e}"
             )
             return self._master_portfolio_usdc
+
+    async def _check_spread(self, token_id: str) -> Optional[float]:
+        """Check the bid-ask spread for a token. Returns spread as a fraction (0.05 = 5%)."""
+        try:
+            book = await polymarket_client.get_order_book(token_id)
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+            if not bids or not asks:
+                return None
+            best_bid = float(bids[0].get("price", 0))
+            best_ask = float(asks[0].get("price", 0))
+            if best_bid <= 0 or best_ask <= 0:
+                return None
+            mid = (best_bid + best_ask) / 2
+            return (best_ask - best_bid) / mid
+        except Exception as e:
+            logger.warning(f"Failed to check spread for {token_id[:12]}...: {e}")
+            return None
 
     def _needs_confirmation(
         self, user_settings, amount: float
