@@ -107,6 +107,9 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     keyboard = [
         [
+            InlineKeyboardButton("🧭 Configurer / changer de wallet", callback_data="onboard_start"),
+        ],
+        [
             InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
         ],
