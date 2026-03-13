@@ -96,16 +96,24 @@ class CopyTradeEngine:
             async with async_session() as session:
                 from bot.services.user_service import get_user_by_telegram_id
                 user = await get_user_by_telegram_id(session, user.telegram_id)
-                if not user or not user.is_active or user.is_paused:
+                if not user:
+                    logger.warning(f"User not found in DB — skipping")
+                    return
+                if not user.is_active:
+                    logger.info(f"User {user.telegram_id} is_active=False — skipping")
+                    return
+                if user.is_paused:
+                    logger.info(f"User {user.telegram_id} is_paused=True — skipping")
                     return
 
                 user_settings = await get_or_create_settings(session, user)
 
                 if not await self._passes_filters(user_settings, signal):
-                    logger.debug(f"User {user.telegram_id}: signal filtered out")
+                    logger.info(f"User {user.telegram_id}: signal filtered out by settings")
                     return
 
                 if user_settings.copy_delay_seconds > 0:
+                    logger.debug(f"User {user.telegram_id}: delaying {user_settings.copy_delay_seconds}s")
                     await asyncio.sleep(user_settings.copy_delay_seconds)
 
                 # ── SPEED: decrypt PK once, reuse everywhere ──
@@ -132,6 +140,11 @@ class CopyTradeEngine:
 
                 balance = onchain_balance
 
+                logger.info(
+                    f"User {user.telegram_id}: paper={user.paper_trading}, "
+                    f"balance={balance:.2f} USDC, matic={matic_balance:.4f}"
+                )
+
                 try:
                     gross_amount = calculate_trade_size(
                         user_settings,
@@ -142,6 +155,10 @@ class CopyTradeEngine:
                 except SizingError as e:
                     logger.warning(f"User {user.telegram_id} sizing error: {e}")
                     return
+
+                logger.info(
+                    f"User {user.telegram_id}: sized at {gross_amount:.2f} USDC"
+                )
 
                 # Daily limit check
                 if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
@@ -202,11 +219,17 @@ class CopyTradeEngine:
                     return
 
                 if self._needs_confirmation(user_settings, gross_amount):
+                    logger.info(
+                        f"User {user.telegram_id}: trade {gross_amount:.2f} USDC "
+                        f"exceeds confirmation threshold "
+                        f"{user_settings.confirmation_threshold_usdc:.2f} USDC — skipping"
+                    )
                     await self._notify_error(
                         user,
                         signal,
-                        "Trade ignoré car au-dessus de votre seuil de confirmation. "
-                        "Réduisez le montant ou le seuil dans les « ⚙️ Paramètres » pour qu'il soit copié automatiquement.",
+                        f"Trade de {gross_amount:.2f} USDC ignoré (seuil : "
+                        f"{user_settings.confirmation_threshold_usdc:.2f} USDC). "
+                        "Augmentez le seuil dans « ⚙️ Paramètres » → Seuil de confirmation.",
                     )
                     return
 

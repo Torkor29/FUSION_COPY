@@ -226,7 +226,16 @@ class PolygonClient:
                 receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
                 return tx_hash, receipt
 
-            tx_hash, receipt = await asyncio.to_thread(_send_approval)
+            try:
+                tx_hash, receipt = await asyncio.wait_for(
+                    asyncio.to_thread(_send_approval), timeout=90
+                )
+            except asyncio.TimeoutError:
+                logger.error("USDC approval timed out after 90s")
+                return TransferResult(
+                    success=False,
+                    error="Approval timed out (90s)",
+                )
 
             if receipt["status"] == 1:
                 tx_hex = tx_hash.hex()
@@ -326,7 +335,16 @@ class PolygonClient:
                 receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
                 return tx_hash, receipt
 
-            tx_hash, receipt = await asyncio.to_thread(_send_transfer)
+            try:
+                tx_hash, receipt = await asyncio.wait_for(
+                    asyncio.to_thread(_send_transfer), timeout=90
+                )
+            except asyncio.TimeoutError:
+                logger.error("USDC transfer timed out after 90s")
+                return TransferResult(
+                    success=False,
+                    error="Transaction timed out (90s). Vérifiez sur PolygonScan si elle a été envoyée.",
+                )
             tx_hash_hex = tx_hash.hex()
 
             if receipt["status"] == 1:

@@ -151,23 +151,29 @@ class ClobWsMonitor:
                 logger.debug(f"Non-JSON message from CLOB WS: {raw!r}")
                 continue
 
-            event_type = data.get("type") or data.get("event") or "unknown"
-            evt = RawWsEvent(type=event_type, payload=data)
+            # Handle list messages (CLOB WS sometimes sends arrays)
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if not isinstance(item, dict):
+                    logger.debug(f"Non-dict WS item: {type(item)}")
+                    continue
 
-            # Log minimal, en mettant l'accent sur last_trade_price.
-            if event_type == "last_trade_price":
-                asset = data.get("asset_id") or data.get("asset") or "?"
-                price = data.get("price")
-                size = data.get("size")
-                logger.info(
-                    f"CLOB trade event: asset={asset} price={price} size={size}"
-                )
-            else:
-                logger.debug(f"CLOB WS event: {event_type}")
+                event_type = item.get("type") or item.get("event") or "unknown"
+                evt = RawWsEvent(type=event_type, payload=item)
 
-            if self._on_event:
-                try:
-                    await self._on_event(evt)
-                except Exception as e:
-                    logger.error(f"Error in CLOB WS on_event callback: {e}")
+                if event_type == "last_trade_price":
+                    asset = item.get("asset_id") or item.get("asset") or "?"
+                    price = item.get("price")
+                    size = item.get("size")
+                    logger.info(
+                        f"CLOB trade event: asset={asset} price={price} size={size}"
+                    )
+                else:
+                    logger.debug(f"CLOB WS event: {event_type}")
+
+                if self._on_event:
+                    try:
+                        await self._on_event(evt)
+                    except Exception as e:
+                        logger.error(f"Error in CLOB WS on_event callback: {e}")
 
