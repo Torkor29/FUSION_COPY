@@ -54,22 +54,11 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
                 "🧭 Configurer mon wallet", callback_data="onboard_start"
             )]
         )
-    else:
-        # Wallet déjà configuré → bouton rapide pour changer
-        keyboard.append(
-            [InlineKeyboardButton(
-                "🔄 Changer de wallet", callback_data="onboard_start"
-            )]
-        )
 
     keyboard.extend([
         [
             InlineKeyboardButton("👛 Wallets", callback_data="menu_balance"),
             InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
-        ],
-        [
-            InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
-            InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
         ],
         [
             InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
@@ -79,15 +68,10 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
             InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
         ],
+        [
+            InlineKeyboardButton("📈 Dashboard", callback_data="menu_dashboard"),
+        ],
     ])
-
-    # Dashboard web (si activé)
-    if settings.dashboard_enabled:
-        keyboard.append(
-            [InlineKeyboardButton(
-                "📈 Dashboard Web", callback_data="menu_dashboard"
-            )]
-        )
 
     return text, keyboard
 
