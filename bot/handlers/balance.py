@@ -53,6 +53,12 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         callback_data="menu_wallet_create",
                     )
                 ],
+                [
+                    InlineKeyboardButton(
+                        "🌉 J'ai de la crypto ailleurs (bridge)",
+                        callback_data="menu_wallet_bridge",
+                    )
+                ],
                 [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
             ]
 

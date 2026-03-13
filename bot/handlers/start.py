@@ -424,7 +424,12 @@ async def onboard_cancel(
 def get_start_handler() -> ConversationHandler:
     """Build the /start conversation handler."""
     return ConversationHandler(
-        entry_points=[CommandHandler("start", start_command)],
+        entry_points=[
+            CommandHandler("start", start_command),
+            # Import / création de wallet déclenchés depuis le menu Soldes
+            CallbackQueryHandler(onboard_existing_wallet, pattern="^menu_wallet_import$"),
+            CallbackQueryHandler(onboard_create_wallet, pattern="^menu_wallet_create$"),
+        ],
         states={
             WELCOME: [
                 CallbackQueryHandler(onboard_menu_main, pattern="^onboard_menu_main$"),

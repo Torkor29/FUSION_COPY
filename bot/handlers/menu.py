@@ -9,7 +9,6 @@ from sqlalchemy import select, func
 from bot.db.session import async_session
 from bot.services.user_service import get_user_by_telegram_id, get_or_create_settings
 from bot.services.web3_client import polygon_client
-from bot.handlers.start import onboard_create_wallet
 
 logger = logging.getLogger(__name__)
 
@@ -372,32 +371,27 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def menu_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Guidage pour importer un wallet existant depuis l'écran Soldes."""
+async def menu_wallet_bridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Explication pour les utilisateurs qui ont déjà de la crypto sur une autre chaîne."""
     query = update.callback_query
     await query.answer()
 
     text = (
-        "📩 **Importer un wallet Polygon existant**\n"
+        "🌉 **J'ai de la crypto sur une autre blockchain**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Pour utiliser un wallet que tu as déjà (MetaMask, Phantom, etc.) :\n\n"
-        "1️⃣ Depuis l'écran d'accueil `/start`, clique sur le bouton "
-        "« 🧭 Configurer mon wallet » ou l'option *J'ai déjà un wallet*.\n"
-        "2️⃣ Indique l'adresse Polygon (0x...)\n"
-        "3️⃣ Indique ensuite la clé privée — elle sera chiffrée et ne sera "
-        "plus jamais réaffichée en clair.\n\n"
-        "Ensuite, ton wallet sera utilisé pour les dépôts et le copy-trading."
+        "1️⃣ Commence par **créer ou importer un wallet Polygon** avec les boutons ci-dessus.\n"
+        "   → Tu auras alors une adresse de destination sur Polygon.\n\n"
+        "2️⃣ Ensuite, depuis le menu principal, utilise le bouton « 🌉 Bridge ».\n"
+        "   → Le guide t'explique comment bridger SOL, ETH, USDC... vers ton wallet Polygon.\n\n"
+        "En résumé :\n"
+        "• D'abord une adresse Polygon (wallet dédié ou existant)\n"
+        "• Ensuite seulement, le bridge pour envoyer des fonds dessus."
     )
 
     keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
-
-async def menu_wallet_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Créer un wallet dédié depuis l'écran Soldes en réutilisant la logique d'onboarding."""
-    await onboard_create_wallet(update, context)
 
 
 # ── Back to main menu ───────────────────────────────
@@ -462,7 +456,6 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_bridge, pattern="^menu_bridge$"),
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
-        CallbackQueryHandler(menu_wallet_import, pattern="^menu_wallet_import$"),
-        CallbackQueryHandler(menu_wallet_create, pattern="^menu_wallet_create$"),
+        CallbackQueryHandler(menu_wallet_bridge, pattern="^menu_wallet_bridge$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
     ]
