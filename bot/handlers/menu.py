@@ -6,6 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, ContextTypes
 from sqlalchemy import select, func
 
+from bot.config import settings
 from bot.db.session import async_session
 from bot.services.user_service import get_user_by_telegram_id, get_or_create_settings
 from bot.services.web3_client import polygon_client
@@ -53,6 +54,13 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
                 "🧭 Configurer mon wallet", callback_data="onboard_start"
             )]
         )
+    else:
+        # Wallet déjà configuré → bouton rapide pour changer
+        keyboard.append(
+            [InlineKeyboardButton(
+                "🔄 Changer de wallet", callback_data="onboard_start"
+            )]
+        )
 
     keyboard.extend([
         [
@@ -72,6 +80,14 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
         ],
     ])
+
+    # Dashboard web (si activé)
+    if settings.dashboard_enabled:
+        keyboard.append(
+            [InlineKeyboardButton(
+                "📈 Dashboard Web", callback_data="menu_dashboard"
+            )]
+        )
 
     return text, keyboard
 
@@ -160,18 +176,29 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     text = header + wallet_block + others_block + extra
 
+    # Compter les wallets enregistrés pour proposer le switch
+    has_multiple_wallets = len([w for w in wallets if w.chain == "polygon"]) > 1
+
     keyboard = [
         [
             InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
         ],
+    ]
+    if has_multiple_wallets:
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔀 Changer de wallet actif", callback_data="menu_switch_wallet"
+            ),
+        ])
+    keyboard.extend([
         [
             InlineKeyboardButton(
-                "🧭 Ajouter / changer de wallet", callback_data="onboard_start"
+                "🧭 Ajouter un nouveau wallet", callback_data="onboard_start"
             ),
         ],
         [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
-    ]
+    ])
 
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
@@ -388,6 +415,148 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+# ── Switch wallet ──────────────────────────────────
+
+async def menu_switch_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche la liste des wallets enregistrés pour choisir lequel activer."""
+    query = update.callback_query
+    await query.answer()
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, query.from_user.id)
+        if not user:
+            return
+
+        wallets = [w for w in (user.wallets or []) if w.chain == "polygon"]
+        primary = user.wallet_address or ""
+
+    if len(wallets) < 2:
+        await query.edit_message_text(
+            "ℹ️ Vous n'avez qu'un seul wallet enregistré.\n"
+            "Utilisez « 🧭 Ajouter un nouveau wallet » pour en ajouter un autre.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Retour", callback_data="menu_balance")]]
+            ),
+        )
+        return
+
+    lines = ["🔀 **CHANGER DE WALLET ACTIF**\n━━━━━━━━━━━━━━━━━━━━\n"]
+    keyboard = []
+    for w in wallets:
+        short = f"{w.address[:6]}...{w.address[-4:]}"
+        is_active = w.address.lower() == primary.lower()
+        label_tag = " ✅ actif" if is_active else ""
+        created = " (créé par bot)" if w.auto_created else " (importé)"
+        lines.append(f"• `{short}`{created}{label_tag}")
+        if not is_active:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"🔄 Activer {short}",
+                    callback_data=f"switch_wallet_{w.id}",
+                )
+            ])
+
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ Retour", callback_data="menu_balance")]
+    )
+
+    await query.edit_message_text(
+        "\n".join(lines) + "\n\nSélectionnez le wallet à activer :",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def switch_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Active un wallet existant comme wallet principal."""
+    query = update.callback_query
+    await query.answer()
+
+    wallet_id = int(query.data.replace("switch_wallet_", ""))
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, query.from_user.id)
+        if not user:
+            return
+
+        # Trouver le wallet cible
+        target = None
+        for w in (user.wallets or []):
+            if w.id == wallet_id and w.chain == "polygon":
+                target = w
+                break
+
+        if not target:
+            await query.edit_message_text(
+                "❌ Wallet introuvable.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Retour", callback_data="menu_balance")]]
+                ),
+            )
+            return
+
+        # Désactiver tous les wallets polygon
+        for w in user.wallets:
+            if w.chain == "polygon":
+                w.is_primary = False
+
+        # Activer le nouveau
+        target.is_primary = True
+        user.wallet_address = target.address
+        user.encrypted_private_key = target.encrypted_key
+        user.wallet_auto_created = target.auto_created
+        await session.commit()
+
+        short = f"{target.address[:6]}...{target.address[-4:]}"
+
+    await query.edit_message_text(
+        f"✅ **Wallet activé !**\n\n"
+        f"📬 Wallet actif : `{short}`\n\n"
+        "Ce wallet sera maintenant utilisé pour le copy-trading.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("👛 Wallets", callback_data="menu_balance")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]),
+    )
+
+
+# ── Dashboard ─────────────────────────────────────
+
+async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche le lien vers le dashboard web."""
+    query = update.callback_query
+    await query.answer()
+
+    if settings.dashboard_url:
+        url = settings.dashboard_url
+        note = ""
+    else:
+        url = f"http://localhost:{settings.dashboard_port}"
+        note = (
+            "\n\n⚠️ Accessible uniquement depuis le serveur "
+            "où tourne le bot (ou via tunnel / reverse proxy)."
+        )
+
+    text = (
+        "📈 **DASHBOARD WEB**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Le dashboard affiche un récap en temps réel :\n"
+        "• Trades copiés (jour / semaine)\n"
+        "• Volume, win rate, P&L\n"
+        "• Performance par trader suivi\n\n"
+        f"🔗 **Lien :** {url}"
+        f"{note}"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+    ]
+    await query.edit_message_text(
+        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
 # ── Back to main menu ───────────────────────────────
 
 async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -412,7 +581,6 @@ def get_menu_handlers() -> list:
     return [
         CallbackQueryHandler(menu_balance, pattern="^menu_balance$"),
         CallbackQueryHandler(menu_positions, pattern="^menu_positions$"),
-        # menu_deposit conservé pour compat, mais plus utilisé par le menu principal
         CallbackQueryHandler(menu_deposit, pattern="^menu_deposit$"),
         CallbackQueryHandler(menu_withdraw, pattern="^menu_withdraw$"),
         CallbackQueryHandler(menu_traders, pattern="^menu_traders$"),
@@ -420,5 +588,8 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_bridge, pattern="^menu_bridge$"),
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
+        CallbackQueryHandler(menu_dashboard, pattern="^menu_dashboard$"),
+        CallbackQueryHandler(menu_switch_wallet, pattern="^menu_switch_wallet$"),
+        CallbackQueryHandler(switch_wallet_callback, pattern=r"^switch_wallet_\d+$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
     ]

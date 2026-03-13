@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Dashboard web
     dashboard_enabled: bool = True
     dashboard_port: int = Field(default=8080, ge=1024, le=65535)
+    # URL publique du dashboard (si déployé derrière un reverse proxy)
+    # Ex: https://dashboard.monbot.com — sinon on affiche localhost:<port>
+    dashboard_url: str = ""
 
     # UI / Branding
     # URL d'une bannière (logo) pour le message d'accueil Telegram
