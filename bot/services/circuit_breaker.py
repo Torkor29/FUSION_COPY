@@ -106,16 +106,13 @@ class CircuitBreaker:
                 f"Circuit breaker OPENED for user {user_id}: {state.reason}"
             )
 
-    async def check_user_pnl(
-        self,
-        session: AsyncSession,
-        user: User,
-        stop_loss_pct: float,
-    ) -> tuple[bool, float]:
-        """Check if user's P&L has dropped below stop-loss threshold.
+    async def _get_pnl_pct(
+        self, session: AsyncSession, user: User
+    ) -> tuple[float, float]:
+        """Calculate user's P&L percentage.
 
         Returns:
-            (is_safe, current_pnl_pct) tuple.
+            (pnl_pct, total_invested) tuple.
         """
         total_invested = await session.scalar(
             select(func.sum(Trade.gross_amount_usdc)).where(
@@ -125,10 +122,8 @@ class CircuitBreaker:
         ) or 0.0
 
         if total_invested <= 0:
-            return True, 0.0
+            return 0.0, 0.0
 
-        # Simplified P&L: compare gross invested vs current value
-        # In production, this would check current market prices
         total_net = await session.scalar(
             select(func.sum(Trade.net_amount_usdc)).where(
                 Trade.user_id == user.id,
@@ -137,9 +132,54 @@ class CircuitBreaker:
         ) or 0.0
 
         pnl_pct = ((total_net - total_invested) / total_invested) * 100
+        return pnl_pct, total_invested
+
+    async def check_user_pnl(
+        self,
+        session: AsyncSession,
+        user: User,
+        stop_loss_pct: float,
+        stop_loss_enabled: bool = True,
+    ) -> tuple[bool, float]:
+        """Check if user's P&L has dropped below stop-loss threshold.
+
+        Returns:
+            (is_safe, current_pnl_pct) tuple.
+        """
+        if not stop_loss_enabled:
+            return True, 0.0
+
+        pnl_pct, total_invested = await self._get_pnl_pct(session, user)
+        if total_invested <= 0:
+            return True, 0.0
 
         if pnl_pct < -stop_loss_pct:
             self.trip_user(user.id, f"P&L at {pnl_pct:.1f}% (stop-loss: -{stop_loss_pct}%)")
+            return False, pnl_pct
+
+        return True, pnl_pct
+
+    async def check_user_take_profit(
+        self,
+        session: AsyncSession,
+        user: User,
+        take_profit_pct: float,
+        take_profit_enabled: bool = False,
+    ) -> tuple[bool, float]:
+        """Check if user's P&L has exceeded take-profit threshold.
+
+        Returns:
+            (is_safe, current_pnl_pct) tuple. is_safe=False means TP triggered.
+        """
+        if not take_profit_enabled:
+            return True, 0.0
+
+        pnl_pct, total_invested = await self._get_pnl_pct(session, user)
+        if total_invested <= 0:
+            return True, 0.0
+
+        if pnl_pct > take_profit_pct:
+            self.trip_user(user.id, f"P&L at +{pnl_pct:.1f}% (take-profit: +{take_profit_pct}%)")
             return False, pnl_pct
 
         return True, pnl_pct

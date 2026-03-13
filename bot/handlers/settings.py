@@ -30,12 +30,172 @@ SETTING_LABELS = {
     "percent_per_trade": ("📈 % par trade", "%"),
     "multiplier": ("🎚️ Multiplicateur", "x"),
     "stop_loss_pct": ("🛑 Stop-loss global", "%"),
+    "take_profit_pct": ("🎯 Take-profit global", "%"),
     "max_trade_usdc": ("✅ Mise max", "USDC"),
     "min_trade_usdc": ("❌ Mise min", "USDC"),
     "copy_delay_seconds": ("⏱️ Délai de copie", "s"),
     "manual_confirmation": ("🔔 Confirmation manuelle", ""),
     "confirmation_threshold_usdc": ("🔔 Seuil confirmation", "USDC"),
     "auto_bridge_sol": ("🌉 Auto-bridge SOL", ""),
+}
+
+# Descriptions détaillées avec exemples pour chaque option
+SETTING_DESCRIPTIONS = {
+    "allocated_capital": (
+        "💰 **Capital alloué**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Le budget total que le bot peut utiliser pour copier des trades.\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot utilise ce montant pour calculer la taille de vos positions "
+        "(en mode % ou proportionnel).\n\n"
+        "**Exemple :**\n"
+        "Capital = 500 USDC, mode % à 10%\n"
+        "→ Chaque trade fera 50 USDC\n\n"
+        "📊 Valeurs possibles : **0.01 — 1 000 000 USDC**\n\n"
+        "Envoyez le nouveau montant en USDC :"
+    ),
+    "fixed_amount": (
+        "💵 **Mise fixe par trade**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Chaque trade copié utilisera exactement ce montant.\n\n"
+        "**Comment ça marche :**\n"
+        "Peu importe combien le master trader mise, votre trade "
+        "sera toujours de ce montant fixe.\n\n"
+        "**Exemple :**\n"
+        "Mise fixe = 10 USDC\n"
+        "→ Le master mise 500 USDC ? Vous misez 10 USDC\n"
+        "→ Le master mise 5 USDC ? Vous misez 10 USDC\n\n"
+        "📊 Valeurs possibles : **0.01 — 100 000 USDC**\n\n"
+        "Envoyez le nouveau montant en USDC :"
+    ),
+    "percent_per_trade": (
+        "📈 **Pourcentage par trade**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Chaque trade = un pourcentage de votre capital alloué.\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot calcule automatiquement la mise à partir de votre "
+        "capital alloué et du % choisi.\n\n"
+        "**Exemple :**\n"
+        "Capital = 1000 USDC, % par trade = 5%\n"
+        "→ Chaque trade fera 50 USDC (5% de 1000)\n\n"
+        "📊 Valeurs possibles : **0.1 — 100 %**\n\n"
+        "Envoyez le nouveau pourcentage :"
+    ),
+    "multiplier": (
+        "🎚️ **Multiplicateur**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Multiplie la taille de vos trades par rapport au master.\n\n"
+        "**Comment ça marche :**\n"
+        "En mode proportionnel ou Kelly, la taille calculée est "
+        "multipliée par ce facteur.\n\n"
+        "**Exemples :**\n"
+        "• 0.5x = moitié de la taille du master\n"
+        "• 1.0x = même taille que le master\n"
+        "• 2.0x = le double du master\n\n"
+        "📊 Valeurs possibles : **0.1 — 5.0**\n\n"
+        "Envoyez le nouveau multiplicateur :"
+    ),
+    "stop_loss_pct": (
+        "🛑 **Seuil du Stop-Loss**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Si vos pertes totales dépassent ce pourcentage de votre "
+        "capital, le bot arrête automatiquement de copier.\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot calcule la perte globale sur TOUTES vos positions. "
+        "Si elle dépasse le seuil → arrêt complet du copytrading.\n\n"
+        "**Exemple :**\n"
+        "Capital = 1000 USDC, Stop-loss = 20%\n"
+        "→ Arrêt si vos pertes atteignent 200 USDC\n\n"
+        "📊 Valeurs possibles : **1 — 100 %**\n\n"
+        "Envoyez le nouveau seuil en % :"
+    ),
+    "take_profit_pct": (
+        "🎯 **Seuil du Take-Profit**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Si vos gains totaux dépassent ce pourcentage de votre "
+        "capital, le bot arrête automatiquement de copier.\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot calcule le gain global sur TOUTES vos positions. "
+        "Si il dépasse le seuil → arrêt du copytrading pour "
+        "sécuriser les profits.\n\n"
+        "**Exemple :**\n"
+        "Capital = 1000 USDC, Take-profit = 50%\n"
+        "→ Arrêt si vos gains atteignent 500 USDC\n\n"
+        "📊 Valeurs possibles : **1 — 1000 %**\n\n"
+        "Envoyez le nouveau seuil en % :"
+    ),
+    "max_trade_usdc": (
+        "✅ **Mise maximale par trade**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Plafond de sécurité : aucun trade ne dépassera ce montant.\n\n"
+        "**Comment ça marche :**\n"
+        "Peu importe le mode de sizing, si le montant calculé "
+        "dépasse cette limite, il sera réduit au plafond.\n\n"
+        "**Exemple :**\n"
+        "Mode % = 10%, Capital = 5000 USDC, Mise max = 100 USDC\n"
+        "→ Calcul = 500 USDC, mais plafond = 100 USDC\n\n"
+        "📊 Valeurs possibles : **0.1 — 100 000 USDC**\n\n"
+        "Envoyez le nouveau plafond en USDC :"
+    ),
+    "min_trade_usdc": (
+        "❌ **Mise minimale par trade**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Plancher de sécurité : les trades trop petits sont ignorés.\n\n"
+        "**Comment ça marche :**\n"
+        "Si le montant calculé est en-dessous de cette limite, "
+        "le trade n'est pas copié (trop petit pour être rentable "
+        "après les frais).\n\n"
+        "**Exemple :**\n"
+        "Mise min = 5 USDC\n"
+        "→ Un trade de 2 USDC sera ignoré\n"
+        "→ Un trade de 10 USDC sera copié\n\n"
+        "📊 Valeurs possibles : **0.01 — 10 000 USDC**\n\n"
+        "Envoyez le nouveau plancher en USDC :"
+    ),
+    "copy_delay_seconds": (
+        "⏱️ **Délai de copie**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Temps d'attente avant de copier un trade du master.\n\n"
+        "**Comment ça marche :**\n"
+        "Quand le master ouvre une position, le bot attend ce "
+        "délai avant de copier. Utile pour éviter de copier des "
+        "trades que le master annule rapidement.\n\n"
+        "**Exemples :**\n"
+        "• 0s = copie instantanée (recommandé)\n"
+        "• 30s = attend 30 secondes avant de copier\n"
+        "• 300s = attend 5 minutes\n\n"
+        "📊 Valeurs possibles : **0 — 3600 secondes**\n\n"
+        "Envoyez le nouveau délai en secondes :"
+    ),
+    "confirmation_threshold_usdc": (
+        "🔔 **Seuil de confirmation**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Au-dessus de ce montant, le bot demande votre confirmation "
+        "avant de copier un trade.\n\n"
+        "**Comment ça marche :**\n"
+        "Même si la confirmation manuelle est désactivée, les trades "
+        "dépassant ce seuil nécessitent votre approbation.\n\n"
+        "**Exemple :**\n"
+        "Seuil = 50 USDC\n"
+        "→ Trade de 30 USDC = copié automatiquement\n"
+        "→ Trade de 100 USDC = le bot vous demande avant\n\n"
+        "📊 Valeurs possibles : **0.01 — 100 000 USDC**\n\n"
+        "Envoyez le nouveau seuil en USDC :"
+    ),
+    "max_expiry_days": (
+        "📅 **Expiration maximale**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Ne copie que les marchés qui expirent dans les N prochains jours.\n\n"
+        "**Comment ça marche :**\n"
+        "Filtre les marchés trop lointains pour concentrer le capital "
+        "sur des résolutions proches.\n\n"
+        "**Exemple :**\n"
+        "Expiry max = 30 jours\n"
+        "→ Marché qui expire dans 7 jours = copié\n"
+        "→ Marché qui expire dans 90 jours = ignoré\n\n"
+        "📊 Valeurs possibles : **1 — 365 jours**\n\n"
+        "Envoyez le nombre de jours maximum :"
+    ),
 }
 
 
@@ -85,66 +245,65 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
-    """Build the settings display text and keyboard.
-
-    On met en avant le paramètre clé selon le mode de sizing.
-    """
-    mode_display = {
-        SizingMode.FIXED: "Fixe (montant par trade)",
-        SizingMode.PERCENT: "% du capital",
-        SizingMode.PROPORTIONAL: "Proportionnel au master",
-        SizingMode.KELLY: "Kelly (avancé)",
-    }
+    """Build the settings display text and keyboard."""
 
     wallets = us.followed_wallets or []
     wallet_display = f"**{len(wallets)}** trader(s)" if wallets else "**Aucun**"
 
-    # Ligne descriptive principale selon le mode
+    # Ligne descriptive selon le mode de sizing
     if us.sizing_mode == SizingMode.FIXED:
         sizing_line = (
-            f"📊 Mode de sizing       : **Fixe** — "
-            f"**{us.fixed_amount:.2f} USDC** par trade\n"
+            f"📊 Sizing : **Fixe** — **{us.fixed_amount:.2f} USDC** par trade\n"
         )
     elif us.sizing_mode == SizingMode.PERCENT:
         sizing_line = (
-            f"📊 Mode de sizing       : **% du capital** — "
-            f"**{us.percent_per_trade:.2f}%** de {us.allocated_capital:.2f} USDC\n"
+            f"📊 Sizing : **% du capital** — "
+            f"**{us.percent_per_trade:.1f}%** de {us.allocated_capital:.0f} USDC\n"
         )
     elif us.sizing_mode == SizingMode.PROPORTIONAL:
         sizing_line = (
-            "📊 Mode de sizing       : **Proportionnel au master**\n"
-            f"   → Multiplicateur      : **{us.multiplier}x**\n"
+            f"📊 Sizing : **Proportionnel** — **{us.multiplier}x** du master\n"
         )
-    else:  # Kelly ou autre
+    else:
         sizing_line = (
-            "📊 Mode de sizing       : **Kelly (avancé)**\n"
-            f"   → Multiplicateur      : **{us.multiplier}x**\n"
+            f"📊 Sizing : **Kelly** — multiplicateur **{us.multiplier}x**\n"
         )
+
+    # Stop-loss display
+    sl_enabled = getattr(us, "stop_loss_enabled", True)
+    if sl_enabled:
+        sl_line = f"🛑 Stop-loss : **Activé — {us.stop_loss_pct:.0f}%**\n"
+    else:
+        sl_line = "🛑 Stop-loss : **Désactivé**\n"
+
+    # Take-profit display
+    tp_enabled = getattr(us, "take_profit_enabled", False)
+    tp_pct = getattr(us, "take_profit_pct", 50.0)
+    if tp_enabled:
+        tp_line = f"🎯 Take-profit : **Activé — {tp_pct:.0f}%**\n"
+    else:
+        tp_line = "🎯 Take-profit : **Désactivé**\n"
 
     text = (
         "⚙️ **PARAMÈTRES DE COPYTRADE**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Traders suivis       : {wallet_display}\n"
-        f"💰 Capital alloué       : **{us.allocated_capital:.2f} USDC**\n"
+        f"👤 Traders suivis : {wallet_display}\n"
+        f"💰 Capital alloué : **{us.allocated_capital:.2f} USDC**\n"
         f"{sizing_line}"
-        f"🛑 Stop-loss global     : **{us.stop_loss_pct}%** "
-        "(optionnel, sur la perte TOTALE)\n"
-        f"✅ Mise max (sécurité)  : **{us.max_trade_usdc:.2f} USDC**\n"
-        f"❌ Mise min (sécurité)  : **{us.min_trade_usdc:.2f} USDC**\n"
-        f"⏱️ Délai de copie       : **{us.copy_delay_seconds}s**\n"
-        f"🔔 Confirmation manuelle: **{'Oui' if us.manual_confirmation else 'Non'}**\n"
-        f"🌉 Auto-bridge SOL     : **{'Activé' if us.auto_bridge_sol else 'Désactivé'}**\n"
-        "🔍 Mode de suivi masters :\n"
-        f"   • Gamma (positions Gamma API) : **{'Oui' if getattr(us, 'use_gamma_monitor', True) else 'Non'}**\n"
-        f"   • WebSocket CLOB (temps réel) : **{'Oui' if getattr(us, 'use_ws_monitor', False) else 'Non'}**\n"
-        f"📝 Paper Trading        : **{'Oui' if paper_trading else 'Non'}**\n"
+        f"{sl_line}"
+        f"{tp_line}"
+        f"📏 Bornes : **{us.min_trade_usdc:.2f}** — **{us.max_trade_usdc:.2f} USDC**\n"
+        f"⏱️ Délai de copie : **{us.copy_delay_seconds}s**\n"
+        f"🔔 Confirmation : **{'Oui' if us.manual_confirmation else 'Non'}**\n"
+        f"🌉 Auto-bridge SOL : **{'Activé' if us.auto_bridge_sol else 'Désactivé'}**\n"
+        f"📝 Paper Trading : **{'Oui (simulation)' if paper_trading else 'Non (réel)'}**\n"
     )
 
     keyboard: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton("👤 Gérer les traders suivis", callback_data="set_followed")],
+        [InlineKeyboardButton("👤 Traders suivis", callback_data="set_followed")],
         [
             InlineKeyboardButton("💰 Capital", callback_data="set_allocated_capital"),
-            InlineKeyboardButton("📊 Mode de sizing", callback_data="set_sizing_mode"),
+            InlineKeyboardButton("📊 Sizing", callback_data="set_sizing_mode"),
         ],
     ]
 
@@ -158,37 +317,30 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
             [InlineKeyboardButton("📈 % du capital par trade", callback_data="set_percent_per_trade")]
         )
 
-    # Reste des paramètres de risque / comportement
-    keyboard.extend(
+    # SL / TP
+    sl_btn_label = f"🛑 Stop-loss {'ON' if sl_enabled else 'OFF'}"
+    tp_btn_label = f"🎯 Take-profit {'ON' if tp_enabled else 'OFF'}"
+    keyboard.append([
+        InlineKeyboardButton(sl_btn_label, callback_data="set_stop_loss_menu"),
+        InlineKeyboardButton(tp_btn_label, callback_data="set_take_profit_menu"),
+    ])
+
+    keyboard.extend([
+        [InlineKeyboardButton("📏 Bornes min/max", callback_data="set_advanced_limits")],
         [
-            [
-                InlineKeyboardButton("🛑 Stop-loss global", callback_data="set_stop_loss_pct"),
-                InlineKeyboardButton("🔔 Confirm.", callback_data="set_manual_confirmation"),
-            ],
-            [
-                InlineKeyboardButton(
-                    "✅/❌ Bornes par trade", callback_data="set_advanced_limits"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔍 Gamma ON/OFF", callback_data="set_use_gamma_monitor"
-                ),
-                InlineKeyboardButton(
-                    "🔍 WebSocket ON/OFF", callback_data="set_use_ws_monitor"
-                ),
-            ],
-            [
-                InlineKeyboardButton("⏱️ Délai copie", callback_data="set_copy_delay_seconds"),
-            ],
-            [
-                InlineKeyboardButton("🌉 Bridge SOL", callback_data="set_auto_bridge_sol"),
-                InlineKeyboardButton("📝 Paper Mode", callback_data="set_paper_trading"),
-            ],
-            [InlineKeyboardButton("⚙️ Avancé", callback_data="set_advanced")],
-            [InlineKeyboardButton("🏠 Menu principal", callback_data="set_close")],
-        ]
-    )
+            InlineKeyboardButton("⏱️ Délai copie", callback_data="set_copy_delay_seconds"),
+            InlineKeyboardButton("🔔 Confirmation", callback_data="set_manual_confirmation"),
+        ],
+        [
+            InlineKeyboardButton("🌉 Bridge SOL", callback_data="set_auto_bridge_sol"),
+            InlineKeyboardButton(
+                f"📝 Paper {'ON' if paper_trading else 'OFF'}",
+                callback_data="set_paper_trading",
+            ),
+        ],
+        [InlineKeyboardButton("⚙️ Avancé", callback_data="set_advanced")],
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="set_close")],
+    ])
     return text, keyboard
 
 
@@ -201,9 +353,7 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     field = data.replace("set_", "")
 
     if field == "close":
-        # Retour direct au menu principal global pour simplifier la navigation
         from bot.handlers.menu import _send_main_menu
-
         await _send_main_menu(query.message, query.from_user)
         return ConversationHandler.END
 
@@ -217,33 +367,161 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 InlineKeyboardButton("📅 Expiry max", callback_data="set_max_expiry_days"),
                 InlineKeyboardButton("🔔 Seuil confirm.", callback_data="set_confirmation_threshold_usdc"),
             ],
+            [
+                InlineKeyboardButton(
+                    "🔍 Gamma ON/OFF", callback_data="set_use_gamma_monitor"
+                ),
+                InlineKeyboardButton(
+                    "🔍 WebSocket ON/OFF", callback_data="set_use_ws_monitor"
+                ),
+            ],
             [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
         ]
         await query.edit_message_text(
-            "⚙️ **Paramètres avancés**\n\nSélectionnez un paramètre à modifier :",
+            "⚙️ **Paramètres avancés**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**📋 Catégories** — Filtrer par catégorie de marché\n"
+            "**🚫 Blacklist** — Exclure des marchés spécifiques\n"
+            "**📅 Expiry max** — Ne copier que les marchés proches\n"
+            "**🔔 Seuil confirm.** — Montant au-dessus duquel le bot demande confirmation\n"
+            "**🔍 Gamma/WebSocket** — Choisir comment suivre les masters",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return MAIN_MENU
 
     if field == "advanced_limits":
-        # Sous-menu dédié aux bornes min/max par trade pour plus de clarté
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
         keyboard = [
-            [
-                InlineKeyboardButton("✅ Mise max (sécurité)", callback_data="set_max_trade_usdc"),
-            ],
-            [
-                InlineKeyboardButton("❌ Mise min (sécurité)", callback_data="set_min_trade_usdc"),
-            ],
+            [InlineKeyboardButton(
+                f"✅ Mise max : {us.max_trade_usdc:.2f} USDC",
+                callback_data="set_max_trade_usdc",
+            )],
+            [InlineKeyboardButton(
+                f"❌ Mise min : {us.min_trade_usdc:.2f} USDC",
+                callback_data="set_min_trade_usdc",
+            )],
             [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
         ]
         await query.edit_message_text(
             "📏 **Bornes de mise par trade**\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Ces limites s'appliquent quel que soit le mode de sizing :\n\n"
-            "• **Mise max** : plafonne la taille d'un trade (sécurité haute).\n"
-            "• **Mise min** : évite les micro-trades trop petits.\n\n"
-            "Elles viennent en plus du montant fixe / % que vous avez choisi.",
+            "Ces limites s'appliquent quel que soit le mode de sizing.\n"
+            "Elles servent de garde-fou pour protéger votre capital.\n\n"
+            f"• **Mise max** : plafond à **{us.max_trade_usdc:.2f} USDC**\n"
+            "  → Aucun trade ne dépassera ce montant\n\n"
+            f"• **Mise min** : plancher à **{us.min_trade_usdc:.2f} USDC**\n"
+            "  → Les trades trop petits seront ignorés",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    # ── Stop-loss sub-menu ──
+    if field == "stop_loss_menu":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        sl_enabled = getattr(us, "stop_loss_enabled", True)
+        toggle_label = "❌ Désactiver" if sl_enabled else "✅ Activer"
+
+        keyboard = [
+            [InlineKeyboardButton(toggle_label, callback_data="set_stop_loss_toggle")],
+            [InlineKeyboardButton(
+                f"✏️ Modifier le seuil ({us.stop_loss_pct:.0f}%)",
+                callback_data="set_stop_loss_pct",
+            )],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+
+        status = f"**Activé — {us.stop_loss_pct:.0f}%**" if sl_enabled else "**Désactivé**"
+        await query.edit_message_text(
+            "🛑 **Stop-Loss Global**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"État actuel : {status}\n\n"
+            "**Comment ça marche :**\n"
+            "Si vos pertes totales sur TOUTES vos positions dépassent "
+            "le seuil choisi, le bot arrête automatiquement de copier "
+            "de nouveaux trades. Vos positions existantes restent ouvertes.\n\n"
+            "**Exemple :**\n"
+            f"Capital = {us.allocated_capital:.0f} USDC, Stop-loss = {us.stop_loss_pct:.0f}%\n"
+            f"→ Arrêt si vos pertes atteignent "
+            f"{us.allocated_capital * us.stop_loss_pct / 100:.0f} USDC\n\n"
+            "💡 Le stop-loss se réinitialise automatiquement après 1h.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "stop_loss_toggle":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+            current = getattr(us, "stop_loss_enabled", True)
+            await update_setting(session, us, "stop_loss_enabled", not current)
+            await session.refresh(us)
+            text, keyboard = _build_main_menu(us, user.paper_trading)
+        status = "désactivé" if current else "activé"
+        await query.edit_message_text(
+            f"✅ Stop-loss **{status}**\n\n" + text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    # ── Take-profit sub-menu ──
+    if field == "take_profit_menu":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        tp_enabled = getattr(us, "take_profit_enabled", False)
+        tp_pct = getattr(us, "take_profit_pct", 50.0)
+        toggle_label = "❌ Désactiver" if tp_enabled else "✅ Activer"
+
+        keyboard = [
+            [InlineKeyboardButton(toggle_label, callback_data="set_take_profit_toggle")],
+            [InlineKeyboardButton(
+                f"✏️ Modifier le seuil ({tp_pct:.0f}%)",
+                callback_data="set_take_profit_pct",
+            )],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+
+        status = f"**Activé — {tp_pct:.0f}%**" if tp_enabled else "**Désactivé**"
+        await query.edit_message_text(
+            "🎯 **Take-Profit Global**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"État actuel : {status}\n\n"
+            "**Comment ça marche :**\n"
+            "Si vos gains totaux sur TOUTES vos positions dépassent "
+            "le seuil choisi, le bot arrête automatiquement de copier "
+            "pour sécuriser vos profits. Vos positions restent ouvertes.\n\n"
+            "**Exemple :**\n"
+            f"Capital = {us.allocated_capital:.0f} USDC, Take-profit = {tp_pct:.0f}%\n"
+            f"→ Arrêt si vos gains atteignent "
+            f"{us.allocated_capital * tp_pct / 100:.0f} USDC\n\n"
+            "💡 Idéal pour sécuriser les gains et réinvestir manuellement.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "take_profit_toggle":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+            current = getattr(us, "take_profit_enabled", False)
+            await update_setting(session, us, "take_profit_enabled", not current)
+            await session.refresh(us)
+            text, keyboard = _build_main_menu(us, user.paper_trading)
+        status = "désactivé" if current else "activé"
+        await query.edit_message_text(
+            f"✅ Take-profit **{status}**\n\n" + text,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -266,22 +544,16 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             us = await get_or_create_settings(session, user)
             current = getattr(us, field)
 
-            # On évite le cas les deux OFF : si on désactive le dernier actif,
-            # on force l'autre à ON pour qu'il y ait toujours au moins une source.
             if field == "use_gamma_monitor" and current and not getattr(us, "use_ws_monitor", False):
-                # basculer de Gamma seul -> WebSocket seul
                 await update_setting(session, us, "use_gamma_monitor", False)
                 await update_setting(session, us, "use_ws_monitor", True)
             elif field == "use_ws_monitor" and current and not getattr(us, "use_gamma_monitor", True):
-                # basculer de WebSocket seul -> Gamma seul
                 await update_setting(session, us, "use_ws_monitor", False)
                 await update_setting(session, us, "use_gamma_monitor", True)
             else:
-                # toggle simple
                 new_val = not current
                 await update_setting(session, us, field, new_val)
 
-            # recharger pour affichage
             await session.refresh(us)
             text, keyboard = _build_main_menu(us, user.paper_trading)
         await query.edit_message_text(
@@ -296,8 +568,12 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await session.commit()
             us = await get_or_create_settings(session, user)
             text, keyboard = _build_main_menu(us, user.paper_trading)
+
+        mode = "simulation" if user.paper_trading else "réel"
         await query.edit_message_text(
-            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+            f"✅ Paper Trading **{mode}**\n\n" + text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return MAIN_MENU
 
@@ -311,27 +587,41 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
         ]
         await query.edit_message_text(
-            "📊 **Mode de sizing**\n\n"
+            "📊 **Mode de sizing**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Choisissez comment calculer la taille de vos positions :\n\n"
-            "• **Fixe** — Même montant USDC à chaque trade\n"
-            "• **% Capital** — Pourcentage de votre capital alloué\n"
-            "• **Proportionnel** — Proportionnel au master trader\n"
-            "• **Kelly** — Critère de Kelly (avancé)",
+            "**💵 Fixe** — Même montant USDC à chaque trade\n"
+            "  _Ex: 10 USDC par trade, peu importe le master_\n\n"
+            "**📈 % Capital** — Pourcentage de votre capital alloué\n"
+            "  _Ex: 5% de 1000 USDC = 50 USDC par trade_\n\n"
+            "**📊 Proportionnel** — Proportionnel au master trader\n"
+            "  _Ex: Le master mise 2% de son capital → vous aussi_\n\n"
+            "**🧮 Kelly** — Critère de Kelly (avancé)\n"
+            "  _Optimise la taille selon les probabilités du marché_",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return MAIN_MENU
 
-    # Numeric input — ask user for value
+    # Numeric input — ask user for value with detailed description
     label = SETTING_LABELS.get(field, (field, ""))[0]
     context.user_data["editing_field"] = field
+
+    # Use rich description if available, else fallback
+    description = SETTING_DESCRIPTIONS.get(field)
+    if description:
+        edit_text = description
+    else:
+        edit_text = (
+            f"✏️ **Modifier : {label}**\n\n"
+            "Envoyez la nouvelle valeur :"
+        )
 
     keyboard = [
         [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
     ]
     await query.edit_message_text(
-        f"✏️ **Modifier : {label}**\n\n"
-        "Envoyez la nouvelle valeur :",
+        edit_text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -369,11 +659,12 @@ async def followed_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
 
     await query.edit_message_text(
-        f"👤 **TRADERS SUIVIS**\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 **TRADERS SUIVIS**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{wallet_text}\n\n"
-        f"Ajoutez l'adresse Polygon (0x...) d'un trader Polymarket "
-        f"dont vous voulez copier les positions.",
+        "Ajoutez l'adresse Polygon (0x...) d'un trader Polymarket "
+        "dont vous voulez copier les positions.\n\n"
+        "💡 Trouvez l'adresse sur le profil Polymarket du trader.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -389,9 +680,15 @@ async def follow_add_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
     ]
     await query.edit_message_text(
-        "➕ **Ajouter un trader à suivre**\n\n"
-        "Envoyez l'adresse Polygon (0x...) du trader à copier :\n\n"
-        "💡 Vous pouvez la trouver sur le profil Polymarket du trader.",
+        "➕ **Ajouter un trader à suivre**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Envoyez l'adresse Polygon (0x...) du trader à copier.\n\n"
+        "**Où trouver l'adresse :**\n"
+        "1. Allez sur le profil Polymarket du trader\n"
+        "2. Copiez l'adresse de son wallet Polygon\n"
+        "3. Collez-la ici\n\n"
+        "**Format attendu :**\n"
+        "`0x1234...abcd` (42 caractères, commence par 0x)",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -544,6 +841,7 @@ async def receive_setting_value(
         "percent_per_trade": (0.1, 100),
         "multiplier": (0.1, 5.0),
         "stop_loss_pct": (1, 100),
+        "take_profit_pct": (1, 1000),
         "max_trade_usdc": (0.1, 100_000),
         "min_trade_usdc": (0.01, 10_000),
         "copy_delay_seconds": (0, 3600),
@@ -587,7 +885,6 @@ def get_settings_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("settings", settings_command),
-            # Permet d'ouvrir les paramètres directement depuis le bouton du menu principal
             CallbackQueryHandler(settings_command, pattern="^menu_settings$"),
         ],
         states={

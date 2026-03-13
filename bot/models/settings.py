@@ -36,7 +36,10 @@ class UserSettings(Base):
     multiplier: Mapped[float] = mapped_column(Float, default=1.0)
 
     # Risk management
+    stop_loss_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stop_loss_pct: Mapped[float] = mapped_column(Float, default=20.0)
+    take_profit_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    take_profit_pct: Mapped[float] = mapped_column(Float, default=50.0)
     max_trade_usdc: Mapped[float] = mapped_column(Float, default=100.0)
     min_trade_usdc: Mapped[float] = mapped_column(Float, default=1.0)
 
