@@ -41,16 +41,12 @@ async def _send_main_menu(message, tg_user, text_override: str | None = None) ->
             InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
         ],
         [
-            InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
+            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
         ],
         [
             InlineKeyboardButton("👥 Traders suivis", callback_data="menu_traders"),
             InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
-        ],
-        [
-            InlineKeyboardButton("🌉 Bridge", callback_data="menu_bridge"),
-            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
         ],
         [InlineKeyboardButton("❓ Aide", callback_data="menu_help")],
     ]
@@ -71,14 +67,16 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if not user:
             return
 
-        wallet = user.wallet_address or ""
-        wallet_short = f"`{wallet[:6]}...{wallet[-4:]}`" if wallet else "—"
+        wallets = user.wallets or []
+        primary_address = user.wallet_address or ""
 
-    if wallet:
-        usdc_native, usdc_e = await polygon_client.get_usdc_balances(wallet)
-        pol = await polygon_client.get_matic_balance(wallet)
+    if primary_address:
+        usdc_native, usdc_e = await polygon_client.get_usdc_balances(primary_address)
+        pol = await polygon_client.get_matic_balance(primary_address)
+        wallet_short = f"`{primary_address[:6]}...{primary_address[-4:]}`"
     else:
         usdc_native, usdc_e, pol = 0.0, 0.0, 0.0
+        wallet_short = "—"
 
     extra = ""
     if usdc_e > 0 and usdc_native == 0:
@@ -89,9 +87,9 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
     header = "👛 **WALLETS**\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    if wallet:
+    if primary_address:
         wallet_block = (
-            f"🔷 **Polygon (principal)**\n"
+            f"🔷 **Polygon (principal)** — utilisé pour le copy-trading\n"
             f"   📬 Adresse : {wallet_short}\n"
             f"   💵 USDC natif (Polymarket) : **{usdc_native:.2f}**\n"
             f"   💵 USDC.e (bridgé) : **{usdc_e:.2f}**\n"
@@ -99,19 +97,37 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
     else:
         wallet_block = (
-            "🔷 **Polygon (principal)**\n"
-            "   📬 Adresse : *Non configuré*\n"
-            "   👉 Utilisez le bouton « 🧭 Configurer mon wallet » dans le menu principal.\n"
+            "🔷 **Polygon (principal)** — aucun wallet configuré\n"
+            "   👉 Utilisez « 🧭 Configurer mon wallet » pour créer ou importer un wallet.\n"
         )
 
-    text = header + wallet_block + extra
+    # Autres wallets enregistrés (archives / consultation)
+    other_lines: list[str] = []
+    for w in wallets:
+        if w.chain != "polygon":
+            continue
+        if primary_address and w.address == primary_address:
+            continue
+        other_lines.append(f"• `{w.address[:6]}...{w.address[-4:]}`")
+
+    if other_lines:
+        others_block = (
+            "\n📂 **Autres wallets enregistrés** (non utilisés par le bot)\n"
+            + "\n".join(other_lines)
+            + "\n"
+        )
+    else:
+        others_block = ""
+
+    text = header + wallet_block + others_block + extra
 
     keyboard = [
         [
-            InlineKeyboardButton("🧭 Configurer / changer de wallet", callback_data="onboard_start"),
+            InlineKeyboardButton(
+                "🧭 Ajouter / changer de wallet", callback_data="onboard_start"
+            ),
         ],
         [
-            InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
         ],
         [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
@@ -382,16 +398,12 @@ async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
         ],
         [
-            InlineKeyboardButton("💳 Déposer", callback_data="menu_deposit"),
             InlineKeyboardButton("💸 Retirer", callback_data="menu_withdraw"),
+            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
         ],
         [
             InlineKeyboardButton("👥 Traders suivis", callback_data="menu_traders"),
             InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
-        ],
-        [
-            InlineKeyboardButton("🌉 Bridge", callback_data="menu_bridge"),
-            InlineKeyboardButton("📜 Historique", callback_data="menu_history"),
         ],
         [InlineKeyboardButton("❓ Aide", callback_data="menu_help")],
     ]
@@ -405,6 +417,7 @@ def get_menu_handlers() -> list:
     return [
         CallbackQueryHandler(menu_balance, pattern="^menu_balance$"),
         CallbackQueryHandler(menu_positions, pattern="^menu_positions$"),
+        # menu_deposit conservé pour compat, mais plus utilisé par le menu principal
         CallbackQueryHandler(menu_deposit, pattern="^menu_deposit$"),
         CallbackQueryHandler(menu_withdraw, pattern="^menu_withdraw$"),
         CallbackQueryHandler(menu_traders, pattern="^menu_traders$"),

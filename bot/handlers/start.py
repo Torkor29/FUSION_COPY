@@ -405,12 +405,12 @@ async def onboard_confirm(
             f"📬 Wallet : `{wallet_address[:6]}...{wallet_address[-4:]}`\n"
             "🔒 Clé privée : chiffrée AES-256 ✅\n"
             "📝 Mode : Paper Trading\n\n"
-            "💡 Le bot utilisera les USDC déjà présents sur ce wallet. "
-            "Vous pouvez aussi déposer plus de fonds via le bouton « 💳 Déposer ».\n\n"
+            "💡 Pour l'alimenter, envoie simplement des USDC sur cette adresse "
+            "depuis ton exchange ou via un bridge. Tu peux toujours retrouver "
+            "l'adresse complète dans l'onglet « 👛 Wallets ».\n\n"
             "**Prochaines étapes :**\n"
-            "• Bouton « 💰 Soldes » — Voir vos soldes actuels\n"
-            "• Bouton « ⚙️ Paramètres » — Choisir quels traders copier\n"
-            "• Bouton « 💳 Déposer » — Ajouter des fonds si besoin",
+            "• Onglet « 👛 Wallets » — Voir ton wallet principal et les soldes\n"
+            "• Onglet « ⚙️ Paramètres » — Choisir quels traders copier",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
