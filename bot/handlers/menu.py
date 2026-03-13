@@ -9,6 +9,7 @@ from sqlalchemy import select, func
 from bot.db.session import async_session
 from bot.services.user_service import get_user_by_telegram_id, get_or_create_settings
 from bot.services.web3_client import polygon_client
+from bot.handlers.start import onboard_existing_wallet, onboard_create_wallet
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +372,16 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def menu_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Démarre directement le flux d'import de wallet existant."""
+    await onboard_existing_wallet(update, context)
+
+
+async def menu_wallet_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Démarre directement la création d'un wallet dédié."""
+    await onboard_create_wallet(update, context)
+
+
 async def menu_wallet_bridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Explication pour les utilisateurs qui ont déjà de la crypto sur une autre chaîne."""
     query = update.callback_query
@@ -456,6 +467,8 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_bridge, pattern="^menu_bridge$"),
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
+        CallbackQueryHandler(menu_wallet_import, pattern="^menu_wallet_import$"),
+        CallbackQueryHandler(menu_wallet_create, pattern="^menu_wallet_create$"),
         CallbackQueryHandler(menu_wallet_bridge, pattern="^menu_wallet_bridge$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
     ]
