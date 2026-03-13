@@ -28,6 +28,41 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
+        # Si aucun wallet Polygon n'est encore configuré, proposer directement
+        # l'import ou la création d'un wallet dédié.
+        if not user.wallet_address:
+            text = (
+                "💰 **SOLDES & PORTEFEUILLE**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Tu n'as pas encore de **wallet Polygon** configuré pour le copy-trading.\n\n"
+                "Choisis une option :\n"
+                "• 📩 *J'ai déjà un wallet Polygon* → importer ton wallet existant\n"
+                "• 🆕 *Me créer un wallet Polygon* → le bot génère un wallet dédié\n"
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "📩 J'ai déjà un wallet Polygon",
+                        callback_data="menu_wallet_import",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🆕 Me créer un wallet Polygon",
+                        callback_data="menu_wallet_create",
+                    )
+                ],
+                [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+            ]
+
+            await update.message.reply_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
         # Count open positions
         open_count = await session.scalar(
             select(func.count(Trade.id)).where(

@@ -258,12 +258,15 @@ async def onboard_create_wallet(
         user.wallet_auto_created = True
         await session.commit()
 
-    del private_key
-
+    # Envoyer l'adresse + la clé une seule fois pour sauvegarde utilisateur
     await query.edit_message_text(
-        "🎉 **Wallet Polygon créé !**\n\n"
-        f"📬 Adresse : `{wallet_address}`\n\n"
-        "⚠️ **Ce wallet est vide.** Pour copier des trades, "
+        "🎉 **Wallet Polygon dédié créé !**\n\n"
+        f"📬 Adresse : `{wallet_address}`\n"
+        f"🔑 Clé privée : `{private_key}`\n\n"
+        "⚠️ **Important :**\n"
+        "• Sauvegardez cette clé privée dans un endroit sûr (gestionnaire de mots de passe, note chiffrée, etc.).\n"
+        "• Le bot ne vous la réaffichera plus.\n\n"
+        "Ce wallet est vide au départ. Pour copier des trades, "
         "vous devez d'abord y déposer des **USDC**.\n\n"
         "Depuis le menu principal, utilisez « 💳 Déposer » — le bot vous guide pour :\n"
         "• 💳 Acheter des USDC par carte bancaire\n"
@@ -272,6 +275,9 @@ async def onboard_create_wallet(
         "Puis cliquez sur « ⚙️ Paramètres » pour choisir quels traders copier.",
         parse_mode="Markdown",
     )
+
+    # Nettoyer la clé en mémoire
+    del private_key
 
     return ConversationHandler.END
 

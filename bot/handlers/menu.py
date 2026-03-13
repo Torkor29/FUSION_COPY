@@ -9,6 +9,7 @@ from sqlalchemy import select, func
 from bot.db.session import async_session
 from bot.services.user_service import get_user_by_telegram_id, get_or_create_settings
 from bot.services.web3_client import polygon_client
+from bot.handlers.start import onboard_create_wallet
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,40 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     async with async_session() as session:
         user = await get_user_by_telegram_id(session, query.from_user.id)
         if not user:
+            return
+
+        # Si aucun wallet Polygon n'est configuré, proposer import / création
+        if not user.wallet_address:
+            text = (
+                "💰 **SOLDES & PORTEFEUILLE**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Tu n'as pas encore de **wallet Polygon** configuré pour le copy-trading.\n\n"
+                "Choisis une option :\n"
+                "• 📩 *J'ai déjà un wallet Polygon* → importer ton wallet existant\n"
+                "• 🆕 *Me créer un wallet Polygon* → le bot génère un wallet dédié\n"
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "📩 J'ai déjà un wallet Polygon",
+                        callback_data="menu_wallet_import",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🆕 Me créer un wallet Polygon",
+                        callback_data="menu_wallet_create",
+                    )
+                ],
+                [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+            ]
+
+            await query.edit_message_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
             return
 
         from bot.models.trade import Trade, TradeStatus
@@ -337,6 +372,34 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def menu_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Guidage pour importer un wallet existant depuis l'écran Soldes."""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "📩 **Importer un wallet Polygon existant**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pour utiliser un wallet que tu as déjà (MetaMask, Phantom, etc.) :\n\n"
+        "1️⃣ Depuis l'écran d'accueil `/start`, clique sur le bouton "
+        "« 🧭 Configurer mon wallet » ou l'option *J'ai déjà un wallet*.\n"
+        "2️⃣ Indique l'adresse Polygon (0x...)\n"
+        "3️⃣ Indique ensuite la clé privée — elle sera chiffrée et ne sera "
+        "plus jamais réaffichée en clair.\n\n"
+        "Ensuite, ton wallet sera utilisé pour les dépôts et le copy-trading."
+    )
+
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
+    await query.edit_message_text(
+        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def menu_wallet_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Créer un wallet dédié depuis l'écran Soldes en réutilisant la logique d'onboarding."""
+    await onboard_create_wallet(update, context)
+
+
 # ── Back to main menu ───────────────────────────────
 
 async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -399,5 +462,7 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_bridge, pattern="^menu_bridge$"),
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
+        CallbackQueryHandler(menu_wallet_import, pattern="^menu_wallet_import$"),
+        CallbackQueryHandler(menu_wallet_create, pattern="^menu_wallet_create$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
     ]
