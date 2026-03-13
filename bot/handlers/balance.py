@@ -28,47 +28,6 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        # Si aucun wallet Polygon n'est encore configuré, proposer directement
-        # l'import ou la création d'un wallet dédié.
-        if not user.wallet_address:
-            text = (
-                "💰 **SOLDES & PORTEFEUILLE**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Tu n'as pas encore de **wallet Polygon** configuré pour le copy-trading.\n\n"
-                "Choisis une option :\n"
-                "• 📩 *J'ai déjà un wallet Polygon* → importer ton wallet existant\n"
-                "• 🆕 *Me créer un wallet Polygon* → le bot génère un wallet dédié\n"
-            )
-
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "📩 J'ai déjà un wallet Polygon",
-                        callback_data="menu_wallet_import",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🆕 Me créer un wallet Polygon",
-                        callback_data="menu_wallet_create",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🌉 J'ai de la crypto ailleurs (bridge)",
-                        callback_data="menu_wallet_bridge",
-                    )
-                ],
-                [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
-            ]
-
-            await update.message.reply_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-            return
-
         # Count open positions
         open_count = await session.scalar(
             select(func.count(Trade.id)).where(
@@ -93,10 +52,14 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         ) or 0.0
 
-        wallet_display = "Non configuré"
         if user.wallet_address:
             w = user.wallet_address
             wallet_display = f"`{w[:6]}...{w[-4:]}`"
+        else:
+            wallet_display = (
+                "Non configuré — utilisez le bouton « 🧭 Configurer mon wallet » "
+                "dans le menu principal."
+            )
 
         sol_display = "Non configuré"
         if user.solana_wallet_address:
