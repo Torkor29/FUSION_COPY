@@ -425,7 +425,7 @@ async def onboard_cancel(
 
 
 def get_start_handler() -> ConversationHandler:
-    """Build the /start conversation handler."""
+    """Build the /start conversation handler (écran d'accueil + config wallet)."""
     return ConversationHandler(
         entry_points=[CommandHandler("start", start_command)],
         states={
@@ -455,5 +455,35 @@ def get_start_handler() -> ConversationHandler:
             ],
         },
         fallbacks=[CommandHandler("start", start_command)],
+        per_user=True,
+    )
+
+
+def get_wallet_setup_handler() -> ConversationHandler:
+    """Conversation dédiée pour import/création de wallet depuis le menu Soldes."""
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(
+                onboard_existing_wallet, pattern="^menu_wallet_import$"
+            ),
+            CallbackQueryHandler(
+                onboard_create_wallet, pattern="^menu_wallet_create$"
+            ),
+        ],
+        states={
+            WALLET_ADDRESS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_wallet_address),
+            ],
+            PRIVATE_KEY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_private_key),
+            ],
+            CONFIRM: [
+                CallbackQueryHandler(onboard_confirm, pattern="^onboard_confirm$"),
+                CallbackQueryHandler(onboard_cancel, pattern="^onboard_cancel$"),
+            ],
+        },
+        fallbacks=[
+            CallbackQueryHandler(onboard_cancel, pattern="^onboard_cancel$"),
+        ],
         per_user=True,
     )

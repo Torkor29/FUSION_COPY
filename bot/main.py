@@ -8,7 +8,7 @@ from telegram.ext import Application
 
 from bot.config import settings
 from bot.db.session import init_db
-from bot.handlers.start import get_start_handler
+from bot.handlers.start import get_start_handler, get_wallet_setup_handler
 from bot.handlers.settings import get_settings_handler
 from bot.handlers.balance import get_balance_handlers
 from bot.handlers.controls import get_control_handlers
@@ -39,6 +39,7 @@ def build_application() -> Application:
     app = Application.builder().token(settings.telegram_token).build()
 
     app.add_handler(get_start_handler())
+    app.add_handler(get_wallet_setup_handler())
     app.add_handler(get_settings_handler())
     app.add_handler(get_bridge_handler())
     for handler in get_bridge_callbacks():
