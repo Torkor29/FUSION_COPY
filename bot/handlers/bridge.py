@@ -76,6 +76,7 @@ async def bridge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "📋 Copier adresse Polygon", callback_data="bridge_copy_poly"
             ),
         ],
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
     ]
 
     # On répond soit à la commande, soit on remplace le message du menu

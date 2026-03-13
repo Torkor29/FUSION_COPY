@@ -26,12 +26,14 @@ async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         user.is_paused = True
         await session.commit()
 
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
         "⏸️ **Copytrading mis en pause**\n\n"
         "Les trades du master ne seront plus copiés.\n"
         "Vos positions ouvertes restent actives.\n\n"
         "Utilisez /resume pour reprendre.",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -50,10 +52,12 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user.is_paused = False
         await session.commit()
 
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
         "▶️ **Copytrading repris !**\n\n"
         "Les prochains trades du master seront copiés automatiquement.",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -89,10 +93,12 @@ async def stop_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             user.is_paused = True
             await session.commit()
 
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await query.edit_message_text(
         "🛑 **Copytrading arrêté.**\n\n"
         "Votre compte est désactivé. Utilisez /start pour réactiver.",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -100,11 +106,16 @@ async def stop_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Cancel stop."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("✅ Arrêt annulé. Le copytrading continue.")
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
+    await query.edit_message_text(
+        "✅ Arrêt annulé. Le copytrading continue.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show help."""
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
         "❓ **AIDE — WENPOLYMARKET**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -125,6 +136,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🔒 Clés chiffrées AES-256 • Jamais exposées en clair\n"
         "📝 Paper Trading activé par défaut",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -166,6 +178,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     win_rate = "N/A"  # TODO: calculate from resolved markets
 
+    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
         "📈 **VOS STATISTIQUES**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -176,6 +189,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"📊 Win rate         : **{win_rate}**\n"
         f"📝 Mode             : **{'Paper' if user.paper_trading else 'Réel'}**",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
