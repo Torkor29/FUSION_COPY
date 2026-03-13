@@ -70,25 +70,6 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if not user:
             return
 
-        from bot.models.trade import Trade, TradeStatus
-        from bot.models.fee import FeeRecord
-
-        open_count = await session.scalar(
-            select(func.count(Trade.id)).where(
-                Trade.user_id == user.id, Trade.status == TradeStatus.FILLED
-            )
-        ) or 0
-
-        total_invested = await session.scalar(
-            select(func.sum(Trade.net_amount_usdc)).where(
-                Trade.user_id == user.id, Trade.status == TradeStatus.FILLED
-            )
-        ) or 0.0
-
-        total_fees = await session.scalar(
-            select(func.sum(FeeRecord.fee_amount)).where(FeeRecord.user_id == user.id)
-        ) or 0.0
-
         wallet = user.wallet_address or ""
         wallet_short = f"`{wallet[:6]}...{wallet[-4:]}`" if wallet else "—"
 
@@ -106,18 +87,23 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Swappez-les en **USDC natif** sur Polygon pour qu'ils soient visibles ici."
         )
 
-    text = (
-        "💰 **SOLDES & PORTEFEUILLE**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📬 Wallet : {wallet_short}\n"
-        f"💵 USDC natif (Polymarket) : **{usdc_native:.2f}**\n"
-        f"💵 USDC.e (bridgé) : **{usdc_e:.2f}**\n"
-        f"⛽ POL (gas) : **{pol:.4f}**"
-        f"\n\n📈 Positions ouvertes : **{open_count}**\n"
-        f"💰 Total investi : **{total_invested:.2f} USDC**\n"
-        f"💸 Frais payés : **{total_fees:.2f} USDC**"
-        f"{extra}"
-    )
+    header = "👛 **WALLETS**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    if wallet:
+        wallet_block = (
+            f"🔷 **Polygon (principal)**\n"
+            f"   📬 Adresse : {wallet_short}\n"
+            f"   💵 USDC natif (Polymarket) : **{usdc_native:.2f}**\n"
+            f"   💵 USDC.e (bridgé) : **{usdc_e:.2f}**\n"
+            f"   ⛽ POL (gas) : **{pol:.4f}**\n"
+        )
+    else:
+        wallet_block = (
+            "🔷 **Polygon (principal)**\n"
+            "   📬 Adresse : *Non configuré*\n"
+            "   👉 Utilisez le bouton « 🧭 Configurer mon wallet » dans le menu principal.\n"
+        )
+
+    text = header + wallet_block + extra
 
     keyboard = [
         [
