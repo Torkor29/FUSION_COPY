@@ -256,6 +256,37 @@ async def withdraw_confirm(
             await query.edit_message_text("❌ Erreur — wallet introuvable.")
             return ConversationHandler.END
 
+        # Verify PK matches wallet address
+        from eth_account import Account
+        try:
+            pk_check = decrypt_private_key(
+                user.encrypted_private_key,
+                settings.encryption_key,
+                user.uuid,
+            )
+            derived_addr = Account.from_key(pk_check).address
+            del pk_check
+            if derived_addr.lower() != user.wallet_address.lower():
+                logger.error(
+                    f"Withdraw PK mismatch: wallet={user.wallet_address[:10]}... "
+                    f"pk_addr={derived_addr[:10]}..."
+                )
+                await query.edit_message_text(
+                    "❌ **Erreur de clé privée**\n\n"
+                    "La clé privée stockée ne correspond pas au wallet actif.\n"
+                    "Réimportez votre wallet via « 👛 Wallets » → « Ajouter un wallet ».",
+                    parse_mode="Markdown",
+                )
+                return ConversationHandler.END
+        except Exception as e:
+            logger.error(f"PK verification failed: {e}")
+            await query.edit_message_text(
+                f"❌ **Erreur de déchiffrement**\n\n"
+                f"Impossible de déchiffrer la clé privée : `{str(e)[:100]}`",
+                parse_mode="Markdown",
+            )
+            return ConversationHandler.END
+
         # Check gas
         matic = await polygon_client.get_matic_balance(user.wallet_address)
         if matic < 0.005:
