@@ -74,6 +74,11 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         ],
     ])
 
+    if user.paper_trading:
+        keyboard.insert(-1, [
+            InlineKeyboardButton("📝 Paper Wallet", callback_data="menu_paper"),
+        ])
+
     return text, keyboard
 
 
@@ -1058,6 +1063,245 @@ async def menu_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+# ── Paper Wallet ─────────────────────────────────────
+
+async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Paper trading wallet overview — balance, PNL, open/settled positions."""
+    query = update.callback_query
+    await query.answer()
+
+    from bot.models.trade import Trade, TradeStatus, TradeSide
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, query.from_user.id)
+        if not user:
+            return
+
+        # Paper trades — open (unsettled) and settled
+        result_open = await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.is_paper == True,  # noqa: E712
+                Trade.is_settled == False,  # noqa: E712
+                Trade.status == TradeStatus.FILLED,
+                Trade.side == TradeSide.BUY,
+            ).order_by(Trade.created_at.desc()).limit(20)
+        )
+        open_trades = list(result_open.scalars().all())
+
+        result_settled = await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.is_paper == True,  # noqa: E712
+                Trade.is_settled == True,  # noqa: E712
+            ).order_by(Trade.created_at.desc()).limit(20)
+        )
+        settled_trades = list(result_settled.scalars().all())
+
+        paper_balance = user.paper_balance
+        paper_initial = user.paper_initial_balance
+
+    # Overall PNL
+    total_pnl = paper_balance - paper_initial
+    pnl_pct = (total_pnl / paper_initial * 100) if paper_initial > 0 else 0
+    pnl_sign = "+" if total_pnl >= 0 else ""
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+
+    lines = [
+        "📝 **PAPER WALLET**\n━━━━━━━━━━━━━━━━━━━━\n",
+        f"💰 **Solde actuel** : {paper_balance:.2f} USDC",
+        f"🏁 **Solde initial** : {paper_initial:.2f} USDC",
+        f"{pnl_emoji} **PNL total** : {pnl_sign}{total_pnl:.2f} USDC ({pnl_sign}{pnl_pct:.1f}%)\n",
+    ]
+
+    # Settled positions summary
+    if settled_trades:
+        wins = sum(1 for t in settled_trades if (t.settlement_pnl or 0) > 0)
+        losses = sum(1 for t in settled_trades if (t.settlement_pnl or 0) <= 0)
+        total_settled_pnl = sum(t.settlement_pnl or 0 for t in settled_trades)
+        wr = (wins / len(settled_trades) * 100) if settled_trades else 0
+
+        lines.append(
+            f"📊 **Résultats** : {wins}W / {losses}L "
+            f"(WR {wr:.0f}%) • PNL {total_settled_pnl:+.2f} USDC"
+        )
+
+        lines.append("\n🏁 **Derniers paris résolus :**")
+        for t in settled_trades[:8]:
+            q = t.market_question or t.market_id
+            if len(q) > 35:
+                q = q[:32] + "..."
+            pnl = t.settlement_pnl or 0
+            emoji = "✅" if pnl > 0 else "❌"
+            lines.append(
+                f"   {emoji} {pnl:+.2f} USDC | {t.net_amount_usdc:.2f} misé\n"
+                f"      _{q}_"
+            )
+    else:
+        lines.append("📊 _Aucun pari résolu pour le moment._")
+
+    # Open positions
+    if open_trades:
+        lines.append(f"\n📌 **Positions ouvertes** ({len(open_trades)}) :")
+        total_open_invested = 0.0
+        for t in open_trades[:8]:
+            q = t.market_question or t.market_id
+            if len(q) > 35:
+                q = q[:32] + "..."
+            shares = t.shares or 0
+            invested = t.net_amount_usdc
+            total_open_invested += invested
+            time_str = t.created_at.strftime("%d/%m %H:%M") if t.created_at else "?"
+            lines.append(
+                f"   🟢 {time_str} | {invested:.2f} USDC | {shares:.1f} shares\n"
+                f"      _{q}_"
+            )
+        lines.append(f"\n   💼 Total investi (ouvert) : {total_open_invested:.2f} USDC")
+    else:
+        lines.append("\n📌 _Aucune position ouverte._")
+
+    lines.append(
+        "\n━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 Les paris se règlent automatiquement\n"
+        "quand le marché est résolu sur Polymarket."
+    )
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n\n_… tronqué_"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_paper"),
+            InlineKeyboardButton("💰 Changer solde", callback_data="paper_set_balance"),
+        ],
+        [
+            InlineKeyboardButton("🔁 Réinitialiser", callback_data="paper_reset"),
+        ],
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+    ]
+    await query.edit_message_text(
+        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def paper_set_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Prompt user to set paper initial balance."""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "💰 **SOLDE PAPER — CHANGER LE MONTANT INITIAL**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Envoyez le montant en USDC pour votre solde initial paper.\n"
+        "Ex: `5000` pour démarrer avec 5000 USDC virtuels.\n\n"
+        "⚠️ Cela réinitialisera votre solde ET votre historique paper."
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("500 USDC", callback_data="paper_init_500"),
+            InlineKeyboardButton("1000 USDC", callback_data="paper_init_1000"),
+        ],
+        [
+            InlineKeyboardButton("5000 USDC", callback_data="paper_init_5000"),
+            InlineKeyboardButton("10000 USDC", callback_data="paper_init_10000"),
+        ],
+        [InlineKeyboardButton("⬅️ Retour", callback_data="menu_paper")],
+    ]
+    await query.edit_message_text(
+        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def paper_init_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set paper balance to a preset amount."""
+    query = update.callback_query
+    await query.answer()
+
+    amount_str = query.data.replace("paper_init_", "")
+    try:
+        amount = float(amount_str)
+    except ValueError:
+        await query.edit_message_text("❌ Montant invalide.")
+        return
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, query.from_user.id)
+        if not user:
+            return
+
+        user.paper_balance = amount
+        user.paper_initial_balance = amount
+
+        # Reset settled status on all paper trades (fresh start)
+        from bot.models.trade import Trade
+        result = await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.is_paper == True,  # noqa: E712
+            )
+        )
+        for trade in result.scalars().all():
+            trade.is_settled = True  # Mark as settled to close them out
+            if trade.settlement_pnl is None:
+                trade.settlement_pnl = 0.0
+
+        await session.commit()
+
+    await query.edit_message_text(
+        f"✅ **Paper wallet réinitialisé !**\n\n"
+        f"💰 Nouveau solde : **{amount:.0f} USDC**\n"
+        f"🏁 Solde initial : **{amount:.0f} USDC**\n\n"
+        "Les anciens trades paper ont été archivés.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Paper Wallet", callback_data="menu_paper")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]),
+    )
+
+
+async def paper_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reset paper balance to initial amount without changing the initial amount."""
+    query = update.callback_query
+    await query.answer()
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, query.from_user.id)
+        if not user:
+            return
+
+        initial = user.paper_initial_balance
+        user.paper_balance = initial
+
+        # Mark all open paper trades as settled
+        from bot.models.trade import Trade, TradeStatus
+        result = await session.execute(
+            select(Trade).where(
+                Trade.user_id == user.id,
+                Trade.is_paper == True,  # noqa: E712
+                Trade.is_settled == False,  # noqa: E712
+            )
+        )
+        for trade in result.scalars().all():
+            trade.is_settled = True
+            if trade.settlement_pnl is None:
+                trade.settlement_pnl = 0.0
+
+        await session.commit()
+
+    await query.edit_message_text(
+        f"🔁 **Paper wallet réinitialisé !**\n\n"
+        f"💰 Solde remis à : **{initial:.0f} USDC**\n"
+        "Toutes les positions paper ont été fermées.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Paper Wallet", callback_data="menu_paper")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]),
+    )
+
+
 # ── Back to main menu ───────────────────────────────
 
 async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1096,5 +1340,9 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_delete_wallet, pattern="^menu_delete_wallet$"),
         CallbackQueryHandler(delete_wallet_confirm, pattern=r"^delwallet_confirm_\d+$"),
         CallbackQueryHandler(delete_wallet_exec, pattern=r"^delwallet_exec_\d+$"),
+        CallbackQueryHandler(menu_paper, pattern="^menu_paper$"),
+        CallbackQueryHandler(paper_set_balance, pattern="^paper_set_balance$"),
+        CallbackQueryHandler(paper_init_callback, pattern=r"^paper_init_\d+$"),
+        CallbackQueryHandler(paper_reset, pattern="^paper_reset$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
     ]

@@ -462,6 +462,89 @@ class PolymarketClient:
             logger.error(f"Failed to get order book: {e}")
             return {"bids": [], "asks": []}
 
+    async def check_market_resolution(self, condition_id: str) -> Optional[dict]:
+        """Check if a market has resolved and determine the winning outcome.
+
+        Returns None if market is still open, or a dict with:
+            {
+                "resolved": True,
+                "winning_token_id": "...",
+                "winning_outcome": "Yes" | "No",
+                "outcome_prices": {"Yes": 1.0, "No": 0.0},
+            }
+
+        Detection logic:
+        - Fetch market from Gamma API by conditionId
+        - If `closed == true` and one outcomePrices is ~1.0 → resolved
+        """
+        try:
+            http = await self._get_http()
+            resp = await http.get(
+                f"{GAMMA_HOST}/markets",
+                params={"condition_id": condition_id, "limit": 1},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if not data:
+                logger.debug(f"No market found for condition_id={condition_id[:12]}...")
+                return None
+
+            market = data[0]
+            is_closed = market.get("closed", False)
+            if not is_closed:
+                return None
+
+            # Parse outcome prices — e.g. "0.99,0.01" or "1,0"
+            outcome_prices_str = market.get("outcomePrices", "")
+            outcomes_str = market.get("outcomes", "")
+            clob_token_ids_str = market.get("clobTokenIds", "")
+
+            if not outcome_prices_str or not outcomes_str:
+                return None
+
+            try:
+                prices = [float(p.strip()) for p in outcome_prices_str.split(",")]
+                outcomes = [o.strip().strip('"') for o in outcomes_str.split(",")]
+                token_ids = [t.strip() for t in clob_token_ids_str.split(",")]
+            except (ValueError, AttributeError):
+                logger.warning(
+                    f"Cannot parse outcomes for condition_id={condition_id[:12]}: "
+                    f"prices={outcome_prices_str}, outcomes={outcomes_str}"
+                )
+                return None
+
+            # Find the winner: price >= 0.95 means resolved to that outcome
+            winner_idx = None
+            for i, price in enumerate(prices):
+                if price >= 0.95:
+                    winner_idx = i
+                    break
+
+            if winner_idx is None:
+                # Closed but no clear winner (might be voided or not fully settled)
+                return None
+
+            outcome_prices_dict = {}
+            for i, outcome in enumerate(outcomes):
+                outcome_prices_dict[outcome] = prices[i] if i < len(prices) else 0.0
+
+            result = {
+                "resolved": True,
+                "winning_outcome": outcomes[winner_idx] if winner_idx < len(outcomes) else "Unknown",
+                "winning_token_id": token_ids[winner_idx] if winner_idx < len(token_ids) else "",
+                "outcome_prices": outcome_prices_dict,
+            }
+            logger.info(
+                f"Market {condition_id[:12]}... resolved → "
+                f"winner={result['winning_outcome']}"
+            )
+            return result
+
+        except Exception as e:
+            logger.error(f"Error checking resolution for {condition_id[:12]}...: {e}")
+            return None
+
     async def get_price(self, token_id: str, side: str = "BUY") -> float:
         """Get the current best price for a token via the order book."""
         try:

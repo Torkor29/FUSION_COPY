@@ -50,6 +50,10 @@ class User(Base):
     daily_limit_usdc: Mapped[float] = mapped_column(Float, default=1000.0)
     daily_spent_usdc: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # Paper trading wallet
+    paper_balance: Mapped[float] = mapped_column(Float, default=1000.0)
+    paper_initial_balance: Mapped[float] = mapped_column(Float, default=1000.0)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

@@ -140,7 +140,7 @@ class CopyTradeEngine:
 
                 # ── SPEED: fetch balances in parallel ──
                 if user.paper_trading:
-                    onchain_balance = user_settings.allocated_capital
+                    onchain_balance = user.paper_balance
                     matic_balance = 1.0  # not needed for paper
                 else:
                     usdc_task = polygon_client.get_usdc_balance(pk_addr)
@@ -331,6 +331,13 @@ class CopyTradeEngine:
                     trade.shares = shares
                     trade.status = TradeStatus.FILLED
                     trade.tx_hash = "paper_trade_simulated"
+                    if signal.side == "BUY":
+                        # Debit paper balance on buy
+                        user.paper_balance = max(0, user.paper_balance - fee_result.net_amount)
+                    else:
+                        # Credit paper balance on sell (proceeds = shares × price)
+                        proceeds = fee_result.net_amount  # net after fee
+                        user.paper_balance += proceeds
                 else:
                     try:
                         order_result = await polymarket_client.place_market_order(

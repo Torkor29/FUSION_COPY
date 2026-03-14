@@ -25,6 +25,7 @@ from bot.services.scheduler import (
     reset_daily_limits,
     cleanup_expired_otps,
     health_check,
+    settle_paper_trades,
 )
 
 logging.basicConfig(
@@ -79,6 +80,13 @@ def setup_scheduler(monitor: MultiMasterMonitor) -> AsyncIOScheduler:
         health_check,
         "interval", minutes=5,
         id="health_check",
+    )
+
+    # Settle resolved paper trades every 5 minutes
+    scheduler.add_job(
+        settle_paper_trades,
+        "interval", minutes=5,
+        id="settle_paper_trades",
     )
 
     # Refresh watched wallets every 60s so new follows are picked up quickly
