@@ -274,12 +274,24 @@ async def withdraw_confirm(
             user.uuid,
         )
 
-        result = await polygon_client.transfer_usdc(
-            from_address=user.wallet_address,
-            to_address=dest,
-            amount_usdc=amount,
-            private_key=pk,
-        )
+        try:
+            result = await polygon_client.transfer_usdc(
+                from_address=user.wallet_address,
+                to_address=dest,
+                amount_usdc=amount,
+                private_key=pk,
+            )
+        except Exception as e:
+            logger.error(f"Withdraw exception for user {tg_user.id}: {e}", exc_info=True)
+            await query.edit_message_text(
+                f"❌ **Erreur de retrait**\n\n"
+                f"Exception : `{str(e)[:200]}`\n\n"
+                "Vérifiez votre solde USDC et POL, puis réessayez.",
+                parse_mode="Markdown",
+            )
+            del pk
+            _clear_withdraw_data(context)
+            return ConversationHandler.END
         del pk
 
     if result.success:

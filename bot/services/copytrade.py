@@ -91,29 +91,34 @@ class CopyTradeEngine:
         """Process a trade signal for a single follower."""
         trade_id = f"ct-{uuid.uuid4().hex[:12]}"
         start_time = time.monotonic()
+        tg_id = user.telegram_id
 
         try:
             async with async_session() as session:
                 from bot.services.user_service import get_user_by_telegram_id
                 user = await get_user_by_telegram_id(session, user.telegram_id)
                 if not user:
-                    logger.warning(f"User not found in DB — skipping")
+                    logger.warning(f"User {tg_id} not found in DB — skipping")
                     return
                 if not user.is_active:
-                    logger.info(f"User {user.telegram_id} is_active=False — skipping")
+                    logger.info(f"User {tg_id} is_active=False — skipping")
                     return
                 if user.is_paused:
-                    logger.info(f"User {user.telegram_id} is_paused=True — skipping")
+                    logger.info(f"User {tg_id} is_paused=True — skipping")
+                    return
+                if not user.encrypted_private_key:
+                    logger.warning(f"User {tg_id} has no encrypted_private_key — skipping")
+                    await self._notify_error(user, signal, "Clé privée non configurée. Réimportez votre wallet.")
                     return
 
                 user_settings = await get_or_create_settings(session, user)
 
                 if not await self._passes_filters(user_settings, signal):
-                    logger.info(f"User {user.telegram_id}: signal filtered out by settings")
+                    logger.info(f"User {tg_id}: signal filtered out by settings")
                     return
 
                 if user_settings.copy_delay_seconds > 0:
-                    logger.debug(f"User {user.telegram_id}: delaying {user_settings.copy_delay_seconds}s")
+                    logger.debug(f"User {tg_id}: delaying {user_settings.copy_delay_seconds}s")
                     await asyncio.sleep(user_settings.copy_delay_seconds)
 
                 # ── SPEED: decrypt PK once, reuse everywhere ──
@@ -141,8 +146,10 @@ class CopyTradeEngine:
                 balance = onchain_balance
 
                 logger.info(
-                    f"User {user.telegram_id}: paper={user.paper_trading}, "
-                    f"balance={balance:.2f} USDC, matic={matic_balance:.4f}"
+                    f"[{tg_id}] ✅ Checks passed — paper={user.paper_trading}, "
+                    f"balance={balance:.2f} USDC, matic={matic_balance:.4f}, "
+                    f"sizing_mode={user_settings.sizing_mode}, "
+                    f"fixed_amount={user_settings.fixed_amount_usdc}"
                 )
 
                 try:
@@ -153,12 +160,11 @@ class CopyTradeEngine:
                         current_balance_usdc=balance,
                     )
                 except SizingError as e:
-                    logger.warning(f"User {user.telegram_id} sizing error: {e}")
+                    logger.warning(f"[{tg_id}] ❌ Sizing error: {e}")
+                    await self._notify_error(user, signal, f"Erreur de sizing : {e}")
                     return
 
-                logger.info(
-                    f"User {user.telegram_id}: sized at {gross_amount:.2f} USDC"
-                )
+                logger.info(f"[{tg_id}] 💰 Sized at {gross_amount:.2f} USDC")
 
                 # Daily limit check
                 if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
@@ -219,17 +225,20 @@ class CopyTradeEngine:
                     return
 
                 if self._needs_confirmation(user_settings, gross_amount):
-                    logger.info(
-                        f"User {user.telegram_id}: trade {gross_amount:.2f} USDC "
-                        f"exceeds confirmation threshold "
-                        f"{user_settings.confirmation_threshold_usdc:.2f} USDC — skipping"
+                    reason = (
+                        "Confirmation manuelle activée"
+                        if user_settings.manual_confirmation
+                        else f"Trade de {gross_amount:.2f} USDC > seuil de {user_settings.confirmation_threshold_usdc:.2f} USDC"
+                    )
+                    logger.warning(
+                        f"User {tg_id}: trade BLOQUÉ — {reason}"
                     )
                     await self._notify_error(
                         user,
                         signal,
-                        f"Trade de {gross_amount:.2f} USDC ignoré (seuil : "
-                        f"{user_settings.confirmation_threshold_usdc:.2f} USDC). "
-                        "Augmentez le seuil dans « ⚙️ Paramètres » → Seuil de confirmation.",
+                        f"⚠️ Trade bloqué : {reason}.\n"
+                        "Désactivez la confirmation manuelle ou augmentez le seuil "
+                        "dans « ⚙️ Paramètres ».",
                     )
                     return
 
@@ -308,6 +317,7 @@ class CopyTradeEngine:
 
                 # Execute trade on Polymarket
                 trade.status = TradeStatus.EXECUTING
+                logger.info(f"[{tg_id}] 🚀 Executing {'PAPER' if user.paper_trading else 'LIVE'} trade: {signal.side} {fee_result.net_amount:.2f} USDC on {signal.token_id[:12]}...")
 
                 if user.paper_trading:
                     shares = fee_result.net_amount / signal.price if signal.price > 0 else 0
@@ -363,9 +373,17 @@ class CopyTradeEngine:
 
         except Exception as e:
             logger.error(
-                f"Unexpected error processing follower {user.telegram_id}: {e}",
+                f"❌ CRASH processing follower {tg_id}: {e}",
                 exc_info=True,
             )
+            # Try to notify user even on crash
+            try:
+                await self._notify_error(
+                    user, signal,
+                    f"Erreur inattendue lors du copytrade : {str(e)[:200]}"
+                )
+            except Exception:
+                pass
 
     async def _passes_filters(self, user_settings, signal: TradeSignal) -> bool:
         """Check if a signal passes the user's filters (blacklist, categories, expiry)."""
