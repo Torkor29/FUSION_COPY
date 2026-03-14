@@ -128,6 +128,17 @@ class CopyTradeEngine:
                     user.uuid,
                 )
 
+                # Auto-fix PK/wallet mismatch (legacy wallets)
+                from eth_account import Account as _Acct
+                pk_addr = _Acct.from_key(pk).address
+                if pk_addr.lower() != (user.wallet_address or "").lower():
+                    logger.warning(
+                        f"[{tg_id}] PK mismatch auto-fix: "
+                        f"{user.wallet_address[:10]}... → {pk_addr[:10]}..."
+                    )
+                    user.wallet_address = pk_addr
+                    await session.commit()
+
                 # ── SPEED: fetch balances in parallel ──
                 if user.paper_trading:
                     onchain_balance = user_settings.allocated_capital

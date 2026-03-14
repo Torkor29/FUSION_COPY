@@ -267,17 +267,14 @@ async def withdraw_confirm(
             derived_addr = Account.from_key(pk_check).address
             del pk_check
             if derived_addr.lower() != user.wallet_address.lower():
-                logger.error(
-                    f"Withdraw PK mismatch: wallet={user.wallet_address[:10]}... "
-                    f"pk_addr={derived_addr[:10]}..."
+                logger.warning(
+                    f"Withdraw PK mismatch auto-fix: wallet={user.wallet_address[:10]}... "
+                    f"→ pk_addr={derived_addr[:10]}..."
                 )
-                await query.edit_message_text(
-                    "❌ **Erreur de clé privée**\n\n"
-                    "La clé privée stockée ne correspond pas au wallet actif.\n"
-                    "Réimportez votre wallet via « 👛 Wallets » → « Ajouter un wallet ».",
-                    parse_mode="Markdown",
-                )
-                return ConversationHandler.END
+                # Auto-fix: align wallet_address to match the PK
+                user.wallet_address = derived_addr
+                await session.commit()
+                logger.info(f"User {tg_user.id} wallet_address corrected to {derived_addr[:10]}...")
         except Exception as e:
             logger.error(f"PK verification failed: {e}")
             await query.edit_message_text(
