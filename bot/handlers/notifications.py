@@ -15,7 +15,7 @@ def format_trade_notification(
     side_emoji = "🟢" if trade.side == TradeSide.BUY else "🔴"
     side_label = "YES" if trade.side == TradeSide.BUY else "NO"
     question = trade.market_question or trade.market_id
-    paper_label = " 📝 PAPER" if trade.is_paper else ""
+    paper_label = " 📝 PAPER" if trade.is_paper else " 🔴 LIVE"
 
     shares = trade.shares if trade.shares else fee_result.net_amount / trade.price if trade.price > 0 else 0
 

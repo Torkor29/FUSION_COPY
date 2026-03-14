@@ -44,12 +44,20 @@ async def init_db() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_trading BOOLEAN DEFAULT true",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_balance FLOAT DEFAULT 1000.0",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_initial_balance FLOAT DEFAULT 1000.0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS live_mode_confirmed BOOLEAN DEFAULT false",
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS is_paper BOOLEAN DEFAULT false",
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS is_settled BOOLEAN DEFAULT false",
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS settlement_pnl FLOAT",
         ]
         for stmt in migrations:
             await conn.execute(text(stmt))
+
+        # SAFETY: force paper mode for users who never explicitly confirmed live
+        await conn.execute(text(
+            "UPDATE users SET paper_trading = true "
+            "WHERE paper_trading = false AND "
+            "(live_mode_confirmed IS NULL OR live_mode_confirmed = false)"
+        ))
 
 
 async def get_session() -> AsyncSession:

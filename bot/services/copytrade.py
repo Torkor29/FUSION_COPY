@@ -113,16 +113,31 @@ class CopyTradeEngine:
 
                 user_settings = await get_or_create_settings(session, user)
 
-                # ── SAFETY: force paper mode if user never explicitly enabled live ──
-                # This prevents accidental live trading when paper_trading column
-                # defaulted to False in DB (before migration fix)
-                if not user.paper_trading and not user.polymarket_approved:
-                    logger.warning(
-                        f"[{tg_id}] ⚠️ SAFETY: paper_trading=False but "
-                        f"polymarket_approved=False — forcing paper mode"
-                    )
-                    user.paper_trading = True
-                    await session.commit()
+                # ══════════════════════════════════════════════
+                # SAFETY GATE: triple-check before allowing live trades
+                # ══════════════════════════════════════════════
+                is_paper = user.paper_trading  # snapshot for entire flow
+
+                if not is_paper:
+                    # Check 1: live_mode_confirmed must be True
+                    live_confirmed = getattr(user, "live_mode_confirmed", False)
+                    if not live_confirmed:
+                        logger.warning(
+                            f"[{tg_id}] ⚠️ SAFETY: paper=False but "
+                            f"live_mode_confirmed=False — forcing paper"
+                        )
+                        user.paper_trading = True
+                        is_paper = True
+                        await session.commit()
+
+                    # Check 2: must have encrypted PK for live
+                    if not is_paper and not user.encrypted_private_key:
+                        logger.warning(
+                            f"[{tg_id}] ⚠️ SAFETY: live mode but no PK — forcing paper"
+                        )
+                        user.paper_trading = True
+                        is_paper = True
+                        await session.commit()
 
                 if not await self._passes_filters(user_settings, signal):
                     logger.info(f"User {tg_id}: signal filtered out by settings")
@@ -132,25 +147,27 @@ class CopyTradeEngine:
                     logger.debug(f"User {tg_id}: delaying {user_settings.copy_delay_seconds}s")
                     await asyncio.sleep(user_settings.copy_delay_seconds)
 
-                # ── SPEED: decrypt PK once, reuse everywhere ──
-                pk = decrypt_private_key(
-                    user.encrypted_private_key,
-                    settings.encryption_key,
-                    user.uuid,
-                )
+                # ── Decrypt PK only for LIVE mode ──
+                pk = None
+                pk_addr = user.wallet_address or ""
 
-                # Derive signing address from PK — never modify DB mid-flow
-                from eth_account import Account as _Acct
-                pk_addr = _Acct.from_key(pk).address
-                if pk_addr.lower() != (user.wallet_address or "").lower():
-                    logger.warning(
-                        f"[{tg_id}] PK/wallet mismatch (no auto-fix): "
-                        f"db={user.wallet_address[:10]}... pk={pk_addr[:10]}... "
-                        f"— using PK address for tx"
+                if not is_paper:
+                    pk = decrypt_private_key(
+                        user.encrypted_private_key,
+                        settings.encryption_key,
+                        user.uuid,
                     )
+                    from eth_account import Account as _Acct
+                    pk_addr = _Acct.from_key(pk).address
+                    if pk_addr.lower() != (user.wallet_address or "").lower():
+                        logger.warning(
+                            f"[{tg_id}] PK/wallet mismatch (no auto-fix): "
+                            f"db={user.wallet_address[:10]}... pk={pk_addr[:10]}... "
+                            f"— using PK address for tx"
+                        )
 
-                # ── SPEED: fetch balances in parallel ──
-                if user.paper_trading:
+                # ── Fetch balances ──
+                if is_paper:
                     onchain_balance = user.paper_balance
                     matic_balance = 1.0  # not needed for paper
                 else:
@@ -163,7 +180,7 @@ class CopyTradeEngine:
                 balance = onchain_balance
 
                 logger.info(
-                    f"[{tg_id}] ✅ Checks passed — paper={user.paper_trading}, "
+                    f"[{tg_id}] ✅ Checks passed — paper={is_paper}, "
                     f"balance={balance:.2f} USDC, matic={matic_balance:.4f}, "
                     f"sizing_mode={user_settings.sizing_mode}, "
                     f"fixed_amount={user_settings.fixed_amount}"
@@ -184,7 +201,7 @@ class CopyTradeEngine:
                 logger.info(f"[{tg_id}] 💰 Sized at {gross_amount:.2f} USDC")
 
                 # Daily limit check (paper mode = unlimited)
-                if not user.paper_trading:
+                if not is_paper:
                     if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
                         remaining = max(0, user.daily_limit_usdc - user.daily_spent_usdc)
                         await self._notify_error(
@@ -198,12 +215,12 @@ class CopyTradeEngine:
 
                 # ── SPEED: skip spread check for speed (market orders fill at best) ──
                 # Spread check only logs a warning now instead of blocking
-                if not user.paper_trading and signal.side == "BUY":
+                if not is_paper and signal.side == "BUY":
                     # Fire-and-forget spread log (don't block execution)
                     asyncio.create_task(self._log_spread(signal.token_id, user.telegram_id))
 
                 # For real trading: balance checks + one-time Polymarket approval
-                if not user.paper_trading:
+                if not is_paper:
                     if gross_amount > onchain_balance + 1e-6:
                         await self._notify_error(
                             user,
@@ -275,14 +292,14 @@ class CopyTradeEngine:
                     fee_amount_usdc=fee_result.fee_amount,
                     net_amount_usdc=fee_result.net_amount,
                     status=TradeStatus.PENDING,
-                    is_paper=user.paper_trading,
+                    is_paper=is_paper,
                 )
                 session.add(trade)
                 await session.flush()
 
                 # Transfer / record platform fee
                 fee_tx_hash = None
-                if user.paper_trading:
+                if is_paper:
                     # Simulated in paper mode
                     fee_tx_hash = "paper_fee_simulated"
                     trade.status = TradeStatus.FEE_PAID
@@ -328,16 +345,16 @@ class CopyTradeEngine:
                     net_amount=fee_result.net_amount,
                     fees_wallet=fee_result.fees_wallet,
                     tx_hash=fee_tx_hash,
-                    confirmed_on_chain=not user.paper_trading,
-                    is_paper=user.paper_trading,
+                    confirmed_on_chain=not is_paper,
+                    is_paper=is_paper,
                 )
                 session.add(fee_record)
 
                 # Execute trade on Polymarket
                 trade.status = TradeStatus.EXECUTING
-                logger.info(f"[{tg_id}] 🚀 Executing {'PAPER' if user.paper_trading else 'LIVE'} trade: {signal.side} {fee_result.net_amount:.2f} USDC on {signal.token_id[:12]}...")
+                logger.info(f"[{tg_id}] 🚀 Executing {'PAPER' if is_paper else 'LIVE'} trade: {signal.side} {fee_result.net_amount:.2f} USDC on {signal.token_id[:12]}...")
 
-                if user.paper_trading:
+                if is_paper:
                     shares = fee_result.net_amount / signal.price if signal.price > 0 else 0
                     trade.shares = shares
                     trade.status = TradeStatus.FILLED

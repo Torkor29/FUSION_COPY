@@ -564,14 +564,68 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if field == "paper_trading":
         async with async_session() as session:
             user = await get_user_by_telegram_id(session, query.from_user.id)
-            user.paper_trading = not user.paper_trading
+
+            if user.paper_trading:
+                # Switching from PAPER → LIVE: show warning, require confirmation
+                keyboard = [
+                    [InlineKeyboardButton(
+                        "⚠️ OUI, passer en LIVE (argent réel)",
+                        callback_data="set_confirm_live_mode",
+                    )],
+                    [InlineKeyboardButton("❌ Non, rester en Paper", callback_data="set_back_main")],
+                ]
+                await query.edit_message_text(
+                    "🚨 **ATTENTION — MODE LIVE (ARGENT RÉEL)**\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "⚠️ **Vous êtes sur le point de passer en mode LIVE.**\n\n"
+                    "En mode LIVE :\n"
+                    "• Le bot utilisera vos **vrais USDC** pour trader\n"
+                    "• Les frais de gas (POL) seront **réellement dépensés**\n"
+                    "• Les trades seront **irréversibles**\n"
+                    "• 1% de frais sera prélevé **en USDC réel**\n\n"
+                    "💰 Votre wallet actif : `" + (user.wallet_address or "non configuré")[:20] + "...`\n\n"
+                    "**Êtes-vous absolument sûr(e) ?**",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
+                return MAIN_MENU
+            else:
+                # Switching from LIVE → PAPER: safe, no confirmation needed
+                user.paper_trading = True
+                user.live_mode_confirmed = False
+                await session.commit()
+                us = await get_or_create_settings(session, user)
+                text, keyboard = _build_main_menu(us, user.paper_trading)
+
+        await query.edit_message_text(
+            "✅ Mode **Paper Trading (simulation)** activé.\n"
+            "Vos vrais USDC ne seront plus utilisés.\n\n" + text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "confirm_live_mode":
+        # Second confirmation step — actually switch to live
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            user.paper_trading = False
+            user.live_mode_confirmed = True
             await session.commit()
             us = await get_or_create_settings(session, user)
             text, keyboard = _build_main_menu(us, user.paper_trading)
 
-        mode = "simulation" if user.paper_trading else "réel"
+        logger.warning(
+            f"⚠️ User {query.from_user.id} switched to LIVE mode "
+            f"(wallet: {user.wallet_address})"
+        )
+
         await query.edit_message_text(
-            f"✅ Paper Trading **{mode}**\n\n" + text,
+            "🔴 **MODE LIVE ACTIVÉ**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Le bot utilisera désormais vos **vrais USDC** pour copier les trades.\n\n"
+            "💡 Pour revenir en mode simulation, appuyez sur "
+            "« 📝 Paper OFF » dans les paramètres.\n\n" + text,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )

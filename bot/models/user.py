@@ -44,6 +44,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     paper_trading: Mapped[bool] = mapped_column(Boolean, default=True)
+    live_mode_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     polymarket_approved: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Limits
