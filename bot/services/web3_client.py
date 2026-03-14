@@ -95,11 +95,12 @@ def wei_to_usdc(amount_wei: int) -> float:
 
 
 class PolygonClient:
-    """Web3 client for Polygon network operations."""
+    """Web3 client for Polygon network operations with RPC failover."""
 
     def __init__(self, rpc_url: Optional[str] = None):
         # Permettre de surcharger l'URL via l'argument ou la config.
         self._rpc_url = rpc_url or POLYGON_RPC_URLS[0]
+        self._fallback_urls = POLYGON_RPC_URLS[1:]  # H4 FIX
         self._w3 = None
         self._usdc_contract = None
         self._usdc_e_contract = None
@@ -107,17 +108,31 @@ class PolygonClient:
     def _get_web3(self):
         """Lazy-init Web3 connection."""
         if self._w3 is None:
-            from web3 import Web3
-            self._w3 = Web3(Web3.HTTPProvider(self._rpc_url))
-            self._usdc_contract = self._w3.eth.contract(
-                address=Web3.to_checksum_address(USDC_POLYGON_ADDRESS),
-                abi=ERC20_ABI,
-            )
-            self._usdc_e_contract = self._w3.eth.contract(
-                address=Web3.to_checksum_address(USDC_E_POLYGON_ADDRESS),
-                abi=ERC20_ABI,
-            )
+            self._init_web3(self._rpc_url)
         return self._w3
+
+    def _init_web3(self, rpc_url: str):
+        """Initialize Web3 with a specific RPC URL."""
+        from web3 import Web3
+        self._rpc_url = rpc_url
+        self._w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self._usdc_contract = self._w3.eth.contract(
+            address=Web3.to_checksum_address(USDC_POLYGON_ADDRESS),
+            abi=ERC20_ABI,
+        )
+        self._usdc_e_contract = self._w3.eth.contract(
+            address=Web3.to_checksum_address(USDC_E_POLYGON_ADDRESS),
+            abi=ERC20_ABI,
+        )
+
+    def _switch_to_fallback(self) -> bool:
+        """H4 FIX: Try switching to a fallback RPC URL. Returns True if switched."""
+        if not self._fallback_urls:
+            return False
+        next_url = self._fallback_urls.pop(0)
+        logger.warning(f"Switching RPC to fallback: {next_url[:40]}...")
+        self._init_web3(next_url)
+        return True
 
     async def get_usdc_balance(self, wallet_address: str) -> float:
         """Get native USDC balance for a wallet on Polygon (spendable par le bot)."""
@@ -131,6 +146,9 @@ class PolygonClient:
             return wei_to_usdc(balance_wei)
         except Exception as e:
             logger.error(f"Failed to get USDC balance for {wallet_address[:10]}...: {e}")
+            # H4 FIX: Try fallback RPC
+            if self._switch_to_fallback():
+                return await self.get_usdc_balance(wallet_address)
             return 0.0
 
     async def get_usdc_balances(
@@ -168,6 +186,9 @@ class PolygonClient:
             return w3.from_wei(balance, "ether")
         except Exception as e:
             logger.error(f"Failed to get MATIC balance: {e}")
+            # H4 FIX: Try fallback RPC
+            if self._switch_to_fallback():
+                return await self.get_matic_balance(wallet_address)
             return 0.0
 
     async def check_usdc_allowance(self, wallet_address: str, spender: str) -> int:

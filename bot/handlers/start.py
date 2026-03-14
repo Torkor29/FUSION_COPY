@@ -264,8 +264,21 @@ async def receive_private_key(
     # Delete the message containing the private key IMMEDIATELY
     try:
         await update.message.delete()
-    except Exception:
-        pass  # Bot may not have delete permissions
+    except Exception as del_err:
+        # H5 FIX: Warn user urgently if PK message couldn't be deleted
+        logger.error(f"CRITICAL: Failed to delete PK message for {update.effective_user.id}: {del_err}")
+        try:
+            await chat.send_message(
+                "⚠️ **ALERTE SÉCURITÉ** ⚠️\n\n"
+                "Impossible de supprimer automatiquement votre message "
+                "contenant la clé privée.\n\n"
+                "**Supprimez-le MANUELLEMENT immédiatement** pour protéger "
+                "votre wallet !\n\n"
+                "📱 Appuyez longuement sur le message → Supprimer",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
     cancel_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("❌ Annuler", callback_data="onboard_cancel")]]

@@ -42,6 +42,10 @@ class MultiMasterMonitor:
     followed_wallets across all active users.
     """
 
+    # H2 FIX: Circuit breaker constants
+    _CB_ERROR_THRESHOLD = 5  # consecutive errors before degraded mode
+    _CB_DEGRADED_INTERVAL = 60  # seconds between polls in degraded mode
+
     def __init__(
         self,
         poll_interval: int = 15,
@@ -52,6 +56,9 @@ class MultiMasterMonitor:
         self._wallet_states: dict[str, WalletState] = {}
         self._is_running = False
         self._task: Optional[asyncio.Task] = None
+        # H2 FIX: Circuit breaker state
+        self._consecutive_errors = 0
+        self._degraded_mode = False
 
     async def start(self) -> None:
         """Start monitoring in background."""
@@ -113,18 +120,47 @@ class MultiMasterMonitor:
             )
 
     async def _poll_loop(self) -> None:
-        """Main polling loop."""
+        """Main polling loop with circuit breaker (H2 FIX)."""
         # Initial snapshot for all wallets
         await self._snapshot_all(initial=True)
 
         while self._is_running:
             try:
-                await asyncio.sleep(self._poll_interval)
+                interval = (
+                    self._CB_DEGRADED_INTERVAL
+                    if self._degraded_mode
+                    else self._poll_interval
+                )
+                await asyncio.sleep(interval)
                 await self._check_all_wallets()
+                # Success — reset circuit breaker
+                if self._consecutive_errors > 0:
+                    logger.info(
+                        f"Monitor recovered after {self._consecutive_errors} errors"
+                    )
+                self._consecutive_errors = 0
+                if self._degraded_mode:
+                    self._degraded_mode = False
+                    logger.info("Monitor exiting degraded mode — back to normal polling")
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Monitor poll error: {e}")
+                self._consecutive_errors += 1
+                logger.error(
+                    f"Monitor poll error ({self._consecutive_errors}/"
+                    f"{self._CB_ERROR_THRESHOLD}): {e}"
+                )
+                if (
+                    self._consecutive_errors >= self._CB_ERROR_THRESHOLD
+                    and not self._degraded_mode
+                ):
+                    self._degraded_mode = True
+                    logger.warning(
+                        f"⚠️ Monitor entering DEGRADED mode after "
+                        f"{self._consecutive_errors} consecutive errors. "
+                        f"Polling every {self._CB_DEGRADED_INTERVAL}s instead of "
+                        f"{self._poll_interval}s"
+                    )
                 await asyncio.sleep(5)
 
     async def _snapshot_all(self, initial: bool = False) -> None:
@@ -168,9 +204,10 @@ class MultiMasterMonitor:
         current_map = {p.token_id: p for p in current_positions}
         known = state.positions
 
-        # New positions only → BUY signal (token appears for the first time)
+        # New positions → BUY signal, size increases → proportional BUY signal (H1 FIX)
         for token_id, pos in current_map.items():
             if token_id not in known:
+                # Brand new position
                 if pos.size < MIN_SIGNAL_SIZE:
                     continue
                 signal = TradeSignal(
@@ -185,7 +222,52 @@ class MultiMasterMonitor:
                     market_question=pos.title,
                 )
                 await self._emit_signal(signal)
-            # Size increases/decreases → silent update (no signal)
+            else:
+                # H1 FIX: Detect position size increases (top-ups)
+                old_pos = known[token_id]
+                size_delta = pos.size - old_pos.size
+                if size_delta >= MIN_SIGNAL_SIZE:
+                    logger.info(
+                        f"[{wallet[:10]}...] Position increase detected: "
+                        f"{old_pos.size:.2f} → {pos.size:.2f} (+{size_delta:.2f}) "
+                        f"on {token_id[:12]}..."
+                    )
+                    signal = TradeSignal(
+                        master_wallet=wallet,
+                        market_id=pos.market_id,
+                        token_id=pos.token_id,
+                        outcome=pos.outcome,
+                        side="BUY",
+                        size=size_delta,  # only the increase
+                        price=pos.current_price,
+                        master_pnl_pct=pos.pnl_pct,
+                        market_question=pos.title,
+                    )
+                    await self._emit_signal(signal)
+
+        # Detect partial position decreases → proportional SELL signal
+        for token_id, pos in current_map.items():
+            if token_id in known:
+                old_pos = known[token_id]
+                size_decrease = old_pos.size - pos.size
+                if size_decrease >= MIN_SIGNAL_SIZE:
+                    logger.info(
+                        f"[{wallet[:10]}...] Position decrease detected: "
+                        f"{old_pos.size:.2f} → {pos.size:.2f} (-{size_decrease:.2f}) "
+                        f"on {token_id[:12]}..."
+                    )
+                    signal = TradeSignal(
+                        master_wallet=wallet,
+                        market_id=pos.market_id,
+                        token_id=pos.token_id,
+                        outcome=pos.outcome,
+                        side="SELL",
+                        size=size_decrease,
+                        price=pos.current_price,
+                        master_pnl_pct=pos.pnl_pct,
+                        market_question=pos.title,
+                    )
+                    await self._emit_signal(signal)
 
         # Closed positions only → SELL signal (token fully exits)
         for token_id, pos in known.items():

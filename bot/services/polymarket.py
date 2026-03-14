@@ -389,8 +389,12 @@ class PolymarketClient:
     ) -> OrderResult:
         """Place a market (FOK) order — fill immediately at best price.
 
-        Retries up to MAX_RETRIES times on network/transient errors.
+        C4 FIX: FOK orders are atomic — do NOT retry on order rejection
+        (would create duplicate orders). Only retry on network errors
+        (timeout, connection error, 5xx).
         """
+        import httpx
+
         last_err: Optional[str] = None
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -415,25 +419,26 @@ class PolymarketClient:
                         avg_price=float(result.get("avgPrice", 0)),
                     )
                 else:
+                    # C4 FIX: FOK rejected by exchange → do NOT retry
                     error_msg = result.get("errorMsg", "Order not filled") if result else "No response"
-                    last_err = error_msg
-                    if attempt < MAX_RETRIES:
-                        logger.warning(
-                            f"Retry {attempt + 1}/{MAX_RETRIES} market order: {error_msg}"
-                        )
-                        await asyncio.sleep(RETRY_BACKOFF_S * (attempt + 1))
-                        continue
+                    logger.warning(f"FOK order rejected (no retry): {error_msg}")
                     return OrderResult(success=False, error=error_msg)
 
-            except Exception as e:
+            except (httpx.TimeoutException, httpx.ConnectError, ConnectionError, TimeoutError) as e:
+                # Network error → safe to retry (order may not have reached exchange)
                 last_err = str(e)
                 if attempt < MAX_RETRIES:
                     logger.warning(
-                        f"Retry {attempt + 1}/{MAX_RETRIES} market order error: {e}"
+                        f"Retry {attempt + 1}/{MAX_RETRIES} market order (network): {e}"
                     )
                     await asyncio.sleep(RETRY_BACKOFF_S * (attempt + 1))
                     continue
                 logger.error(f"Failed to place market order after retries: {e}")
+                return OrderResult(success=False, error=str(e))
+
+            except Exception as e:
+                # Unknown error → do NOT retry FOK (could cause duplicates)
+                logger.error(f"FOK order error (no retry): {e}")
                 return OrderResult(success=False, error=str(e))
 
         return OrderResult(success=False, error=last_err or "Max retries exceeded")

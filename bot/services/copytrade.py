@@ -179,6 +179,15 @@ class CopyTradeEngine:
 
                 balance = onchain_balance
 
+                # C1 FIX: Reject paper trade if insufficient balance (don't clamp to 0)
+                if is_paper and balance <= 0:
+                    await self._notify_error(
+                        user, signal,
+                        "Solde paper insuffisant (0 USDC). "
+                        "Votre portefeuille paper est vide.",
+                    )
+                    return
+
                 logger.info(
                     f"[{tg_id}] ✅ Checks passed — paper={is_paper}, "
                     f"balance={balance:.2f} USDC, matic={matic_balance:.4f}, "
@@ -200,8 +209,13 @@ class CopyTradeEngine:
 
                 logger.info(f"[{tg_id}] 💰 Sized at {gross_amount:.2f} USDC")
 
-                # Daily limit check (paper mode = unlimited)
+                # C2 FIX: Atomic daily limit check with row-level lock
                 if not is_paper:
+                    from sqlalchemy import select, text as sa_text
+                    locked_row = await session.execute(
+                        select(User).where(User.id == user.id).with_for_update()
+                    )
+                    user = locked_row.scalar_one()
                     if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
                         remaining = max(0, user.daily_limit_usdc - user.daily_spent_usdc)
                         await self._notify_error(
@@ -297,60 +311,7 @@ class CopyTradeEngine:
                 session.add(trade)
                 await session.flush()
 
-                # Transfer / record platform fee
-                fee_tx_hash = None
-                if is_paper:
-                    # Simulated in paper mode
-                    fee_tx_hash = "paper_fee_simulated"
-                    trade.status = TradeStatus.FEE_PAID
-                elif settings.collect_fees_onchain and settings.fees_wallet:
-                    # Optional on-chain fee transfer (slower, can be toggled off for speed)
-                    try:
-                        transfer_result = await polygon_client.transfer_usdc(
-                            from_address=pk_addr,
-                            to_address=settings.fees_wallet,
-                            amount_usdc=fee_result.fee_amount,
-                            private_key=pk,
-                        )
-
-                        if not transfer_result.success:
-                            trade.status = TradeStatus.FAILED
-                            trade.error_message = (
-                                f"Fee transfer failed: {transfer_result.error}"
-                            )
-                            await session.commit()
-                            await self._notify_error(
-                                user, signal, trade.error_message
-                            )
-                            return
-
-                        fee_tx_hash = transfer_result.tx_hash
-                        trade.fee_tx_hash = fee_tx_hash
-                        trade.status = TradeStatus.FEE_PAID
-
-                    except Exception as e:
-                        trade.status = TradeStatus.FAILED
-                        trade.error_message = f"Fee transfer error: {e}"
-                        await session.commit()
-                        await self._notify_error(user, signal, str(e))
-                        return
-
-                # Record fee
-                fee_record = FeeRecord(
-                    user_id=user.id,
-                    trade_id=trade.id,
-                    gross_amount=fee_result.gross_amount,
-                    fee_rate=fee_result.fee_rate,
-                    fee_amount=fee_result.fee_amount,
-                    net_amount=fee_result.net_amount,
-                    fees_wallet=fee_result.fees_wallet,
-                    tx_hash=fee_tx_hash,
-                    confirmed_on_chain=not is_paper,
-                    is_paper=is_paper,
-                )
-                session.add(fee_record)
-
-                # Execute trade on Polymarket
+                # ── Execute trade FIRST, collect fee AFTER (C3 FIX) ──
                 trade.status = TradeStatus.EXECUTING
                 logger.info(f"[{tg_id}] 🚀 Executing {'PAPER' if is_paper else 'LIVE'} trade: {signal.side} {fee_result.net_amount:.2f} USDC on {signal.token_id[:12]}...")
 
@@ -360,8 +321,18 @@ class CopyTradeEngine:
                     trade.status = TradeStatus.FILLED
                     trade.tx_hash = "paper_trade_simulated"
                     if signal.side == "BUY":
-                        # Debit paper balance on buy
-                        user.paper_balance = max(0, user.paper_balance - fee_result.net_amount)
+                        # C1 FIX: Reject if paper balance insufficient (no clamping)
+                        if fee_result.gross_amount > user.paper_balance + 1e-6:
+                            trade.status = TradeStatus.FAILED
+                            trade.error_message = "Solde paper insuffisant"
+                            await session.commit()
+                            await self._notify_error(
+                                user, signal,
+                                f"Solde paper insuffisant : {user.paper_balance:.2f} USDC "
+                                f"disponible, {fee_result.gross_amount:.2f} USDC requis.",
+                            )
+                            return
+                        user.paper_balance -= fee_result.gross_amount
                     else:
                         # Credit paper balance on sell (proceeds = shares × price)
                         proceeds = fee_result.net_amount  # net after fee
@@ -395,12 +366,59 @@ class CopyTradeEngine:
                         await self._notify_error(user, signal, str(e))
                         return
 
+                # C3 FIX: Fee transfer AFTER successful trade execution
+                fee_tx_hash = None
+                if is_paper:
+                    fee_tx_hash = "paper_fee_simulated"
+                elif settings.collect_fees_onchain and settings.fees_wallet:
+                    try:
+                        transfer_result = await polygon_client.transfer_usdc(
+                            from_address=pk_addr,
+                            to_address=settings.fees_wallet,
+                            amount_usdc=fee_result.fee_amount,
+                            private_key=pk,
+                        )
+                        if transfer_result.success:
+                            fee_tx_hash = transfer_result.tx_hash
+                            trade.fee_tx_hash = fee_tx_hash
+                        else:
+                            # Trade succeeded but fee failed — log but don't fail the trade
+                            logger.error(
+                                f"[{tg_id}] Fee transfer failed AFTER trade: "
+                                f"{transfer_result.error} — trade still valid"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"[{tg_id}] Fee transfer error AFTER trade: {e} "
+                            f"— trade still valid"
+                        )
+
+                # Record fee
+                fee_record = FeeRecord(
+                    user_id=user.id,
+                    trade_id=trade.id,
+                    gross_amount=fee_result.gross_amount,
+                    fee_rate=fee_result.fee_rate,
+                    fee_amount=fee_result.fee_amount,
+                    net_amount=fee_result.net_amount,
+                    fees_wallet=fee_result.fees_wallet,
+                    tx_hash=fee_tx_hash,
+                    confirmed_on_chain=bool(fee_tx_hash and fee_tx_hash != "paper_fee_simulated"),
+                    is_paper=is_paper,
+                )
+                session.add(fee_record)
+
                 # Finalize
                 elapsed = time.monotonic() - start_time
                 trade.execution_time_ms = int(elapsed * 1000)
                 trade.executed_at = datetime.utcnow()
                 user.daily_spent_usdc += fee_result.gross_amount
                 await session.commit()
+
+                # M3 FIX: Clear PK from memory after use
+                if pk is not None:
+                    del pk
+                    pk = None
 
                 await self._notify_success(
                     user, trade, fee_result, elapsed, signal
