@@ -172,17 +172,18 @@ class CopyTradeEngine:
 
                 logger.info(f"[{tg_id}] 💰 Sized at {gross_amount:.2f} USDC")
 
-                # Daily limit check
-                if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
-                    remaining = max(0, user.daily_limit_usdc - user.daily_spent_usdc)
-                    await self._notify_error(
-                        user,
-                        signal,
-                        f"Limite journalière atteinte ({user.daily_spent_usdc:.2f}/"
-                        f"{user.daily_limit_usdc:.2f} USDC). "
-                        f"Reste disponible : {remaining:.2f} USDC.",
-                    )
-                    return
+                # Daily limit check (paper mode = unlimited)
+                if not user.paper_trading:
+                    if user.daily_spent_usdc + gross_amount > user.daily_limit_usdc:
+                        remaining = max(0, user.daily_limit_usdc - user.daily_spent_usdc)
+                        await self._notify_error(
+                            user,
+                            signal,
+                            f"Limite journalière atteinte ({user.daily_spent_usdc:.2f}/"
+                            f"{user.daily_limit_usdc:.2f} USDC). "
+                            f"Reste disponible : {remaining:.2f} USDC.",
+                        )
+                        return
 
                 # ── SPEED: skip spread check for speed (market orders fill at best) ──
                 # Spread check only logs a warning now instead of blocking

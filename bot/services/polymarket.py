@@ -35,6 +35,7 @@ class Position:
     avg_price: float
     current_price: float
     pnl_pct: float
+    title: str = ""
 
 
 @dataclass
@@ -218,6 +219,7 @@ class PolymarketClient:
                 avg_price=avg_price,
                 current_price=current_price,
                 pnl_pct=pnl_pct,
+                title=p.get("title", p.get("question", "")),
             ))
         return positions
 

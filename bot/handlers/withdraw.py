@@ -48,33 +48,15 @@ async def withdraw_command(
 
     async with async_session() as session:
         user = await get_user_by_telegram_id(session, tg_user.id)
-        if not user or not user.encrypted_private_key:
+        if not user or not user.wallet_address or not user.encrypted_private_key:
             await message.reply_text("❌ Wallet non configuré. Utilisez /start d'abord.")
             return ConversationHandler.END
 
-        # Derive actual address from PK — same address used for transfer later
-        from eth_account import Account
-        try:
-            pk = decrypt_private_key(
-                user.encrypted_private_key,
-                settings.encryption_key,
-                user.uuid,
-            )
-            from_addr = Account.from_key(pk).address
-        except Exception:
-            await message.reply_text("❌ Erreur de déchiffrement du wallet.")
-            return ConversationHandler.END
-        finally:
-            pk = None  # noqa: clear from memory
-
-        if from_addr.lower() != (user.wallet_address or "").lower():
-            logger.warning(
-                f"Withdraw entry PK mismatch: "
-                f"db={user.wallet_address[:10]}... pk={from_addr[:10]}..."
-            )
-
-        usdc_native, usdc_e = await polygon_client.get_usdc_balances(from_addr)
-        matic = await polygon_client.get_matic_balance(from_addr)
+        # Use wallet_address for balance display (same as menu)
+        # save_wallet() guarantees wallet_address == PK-derived address
+        wallet = user.wallet_address
+        usdc_native, usdc_e = await polygon_client.get_usdc_balances(wallet)
+        matic = await polygon_client.get_matic_balance(wallet)
 
     if usdc_native < 0.01:
         keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]

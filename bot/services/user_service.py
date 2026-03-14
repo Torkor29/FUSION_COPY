@@ -1,6 +1,9 @@
 """User service — CRUD operations for users and settings."""
 
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,11 +57,22 @@ async def save_wallet(
 ) -> None:
     """Encrypt and save a wallet's private key for a user.
 
-    Pour compatibilité :
-    - on continue à renseigner les champs historiques sur User
-      (wallet_address, encrypted_private_key, wallet_auto_created),
-    - on crée/maj aussi un enregistrement UserWallet pour gérer plusieurs wallets.
+    IMPORTANT: For Polygon wallets, the canonical address is ALWAYS derived
+    from the private key (not the user-provided address) to guarantee that
+    the stored address matches the key that will sign transactions.
     """
+    # Derive the canonical address from PK — this is the ONLY source of truth
+    if chain == "polygon":
+        from eth_account import Account
+        derived_address = Account.from_key(private_key).address
+        if derived_address.lower() != wallet_address.lower():
+            logger.warning(
+                f"save_wallet: user-provided address {wallet_address[:10]}... "
+                f"differs from PK-derived {derived_address[:10]}... "
+                f"— using PK-derived address"
+            )
+        wallet_address = derived_address
+
     encrypted = encrypt_private_key(
         private_key, settings.encryption_key, user.uuid
     )

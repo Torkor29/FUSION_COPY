@@ -182,6 +182,7 @@ class MultiMasterMonitor:
                     size=pos.size,
                     price=pos.current_price,
                     master_pnl_pct=pos.pnl_pct,
+                    market_question=pos.title,
                 )
                 await self._emit_signal(signal)
             # Size increases/decreases → silent update (no signal)
@@ -198,6 +199,7 @@ class MultiMasterMonitor:
                     size=pos.size,
                     price=pos.current_price,
                     master_pnl_pct=pos.pnl_pct,
+                    market_question=pos.title,
                 )
                 await self._emit_signal(signal)
 
