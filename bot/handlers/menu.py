@@ -181,7 +181,7 @@ async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "🔀 Changer de wallet actif", callback_data="menu_switch_wallet"
             ),
         ])
-    if has_multiple_wallets:
+    if wallets:
         keyboard.append([
             InlineKeyboardButton(
                 "🗑️ Supprimer un wallet", callback_data="menu_delete_wallet"
@@ -622,7 +622,7 @@ async def switch_wallet_callback(update: Update, context: ContextTypes.DEFAULT_T
 # ── Delete wallet ─────────────────────────────────
 
 async def menu_delete_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Affiche la liste des wallets non-actifs pour suppression."""
+    """Affiche la liste de TOUS les wallets pour suppression (y compris l'actif)."""
     query = update.callback_query
     await query.answer()
 
@@ -634,13 +634,9 @@ async def menu_delete_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE)
         wallets = [w for w in (user.wallets or []) if w.chain == "polygon"]
         primary = user.wallet_address or ""
 
-    # Only show non-primary wallets for deletion
-    deletable = [w for w in wallets if w.address.lower() != primary.lower()]
-
-    if not deletable:
+    if not wallets:
         await query.edit_message_text(
-            "ℹ️ Vous n'avez aucun wallet supprimable.\n"
-            "Le wallet actif ne peut pas être supprimé.",
+            "ℹ️ Aucun wallet enregistré.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("⬅️ Retour", callback_data="menu_balance")]]
             ),
@@ -648,15 +644,17 @@ async def menu_delete_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     lines = ["🗑️ **SUPPRIMER UN WALLET**\n━━━━━━━━━━━━━━━━━━━━\n"]
-    lines.append("⚠️ Le wallet actif ne peut pas être supprimé.\n")
     keyboard = []
-    for w in deletable:
+    for w in wallets:
         short = f"{w.address[:6]}...{w.address[-4:]}"
+        is_active = w.address.lower() == primary.lower()
+        tag = " ✅ actif" if is_active else ""
         created = " (créé)" if w.auto_created else " (importé)"
-        lines.append(f"• `{short}`{created}")
+        lines.append(f"• `{short}`{created}{tag}")
+        label = f"🗑️ Supprimer {short}" + (" ⚠️" if is_active else "")
         keyboard.append([
             InlineKeyboardButton(
-                f"🗑️ Supprimer {short}",
+                label,
                 callback_data=f"delwallet_confirm_{w.id}",
             )
         ])
@@ -673,7 +671,7 @@ async def menu_delete_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def delete_wallet_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Demande confirmation avant suppression."""
+    """Demande confirmation avant suppression (wallet actif inclus)."""
     query = update.callback_query
     await query.answer()
 
@@ -699,18 +697,29 @@ async def delete_wallet_confirm(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return
 
-        # Block deletion of active wallet
-        if target.address.lower() == (user.wallet_address or "").lower():
-            await query.edit_message_text(
-                "❌ Impossible de supprimer le wallet actif.\n"
-                "Changez de wallet actif d'abord.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("⬅️ Retour", callback_data="menu_balance")]]
-                ),
-            )
-            return
-
         short = f"{target.address[:6]}...{target.address[-4:]}"
+        is_active = target.address.lower() == (user.wallet_address or "").lower()
+
+    if is_active:
+        warning = (
+            f"🚨 **ATTENTION — WALLET ACTIF**\n\n"
+            f"Wallet : `{short}`\n\n"
+            "C'est votre wallet **principal** utilisé par le bot.\n"
+            "Le supprimer va :\n"
+            "• Arrêter le copy-trading\n"
+            "• Supprimer la clé privée de nos serveurs\n"
+            "• Remettre le bot en état « non configuré »\n\n"
+            "⚠️ **Vos fonds restent sur la blockchain** — "
+            "seule la clé est supprimée de notre système.\n\n"
+            "Vous êtes sûr(e) ?"
+        )
+    else:
+        warning = (
+            f"⚠️ **Confirmer la suppression ?**\n\n"
+            f"Wallet : `{short}`\n\n"
+            "Cette action est irréversible. La clé privée chiffrée "
+            "sera supprimée de nos serveurs."
+        )
 
     keyboard = [
         [
@@ -721,17 +730,14 @@ async def delete_wallet_confirm(update: Update, context: ContextTypes.DEFAULT_TY
         ]
     ]
     await query.edit_message_text(
-        f"⚠️ **Confirmer la suppression ?**\n\n"
-        f"Wallet : `{short}`\n\n"
-        "Cette action est irréversible. La clé privée chiffrée "
-        "sera supprimée de nos serveurs.",
+        warning,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def delete_wallet_exec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Supprime définitivement un wallet non-actif."""
+    """Supprime définitivement un wallet (actif ou non)."""
     query = update.callback_query
     await query.answer()
 
@@ -752,23 +758,54 @@ async def delete_wallet_exec(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_text("❌ Wallet introuvable.")
             return
 
-        # Final safety check
-        if target.address.lower() == (user.wallet_address or "").lower():
-            await query.edit_message_text("❌ Impossible de supprimer le wallet actif.")
-            return
-
         short = f"{target.address[:6]}...{target.address[-4:]}"
+        is_active = target.address.lower() == (user.wallet_address or "").lower()
+
+        # Delete the wallet record
         await session.delete(target)
+
+        if is_active:
+            # Check if there's another polygon wallet to promote
+            remaining = [
+                w for w in (user.wallets or [])
+                if w.chain == "polygon" and w.id != wallet_id
+            ]
+
+            if remaining:
+                # Promote the first remaining wallet as active
+                new_primary = remaining[0]
+                new_primary.is_primary = True
+                user.wallet_address = new_primary.address
+                user.encrypted_private_key = new_primary.encrypted_key
+                user.wallet_auto_created = new_primary.auto_created
+                new_short = f"{new_primary.address[:6]}...{new_primary.address[-4:]}"
+                extra_msg = (
+                    f"\n\n🔄 Wallet actif basculé sur `{new_short}`."
+                )
+            else:
+                # No remaining wallet — reset user to unconfigured state
+                user.wallet_address = None
+                user.encrypted_private_key = None
+                user.wallet_auto_created = False
+                user.polymarket_approved = False
+                extra_msg = (
+                    "\n\n📭 Plus aucun wallet configuré.\n"
+                    "Utilisez « 🧭 Configurer mon wallet » pour en ajouter un."
+                )
+        else:
+            extra_msg = ""
+
         await session.commit()
 
         logger.info(
             f"User {user.telegram_id} deleted wallet "
             f"{target.address[:10]}... (UserWallet #{wallet_id})"
+            f"{' [was active]' if is_active else ''}"
         )
 
     await query.edit_message_text(
         f"✅ Wallet `{short}` supprimé.\n\n"
-        "La clé privée chiffrée a été effacée de nos serveurs.",
+        f"La clé privée chiffrée a été effacée de nos serveurs.{extra_msg}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("👛 Wallets", callback_data="menu_balance")],
