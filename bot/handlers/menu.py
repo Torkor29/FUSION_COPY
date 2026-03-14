@@ -207,31 +207,113 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not user:
             return
 
-        from bot.models.trade import Trade, TradeStatus
+        from bot.models.trade import Trade, TradeStatus, TradeSide
+        # Only BUY trades that are FILLED = open positions
         result = await session.execute(
             select(Trade).where(
-                Trade.user_id == user.id, Trade.status == TradeStatus.FILLED
-            ).order_by(Trade.created_at.desc()).limit(15)
+                Trade.user_id == user.id,
+                Trade.status == TradeStatus.FILLED,
+                Trade.side == TradeSide.BUY,
+            ).order_by(Trade.created_at.desc()).limit(20)
         )
-        trades = result.scalars().all()
+        trades = list(result.scalars().all())
 
     if not trades:
-        text = "📊 **Positions actives**\n\nAucune position pour le moment."
-    else:
-        lines = ["📊 **POSITIONS ACTIVES**\n━━━━━━━━━━━━━━━━━━━━\n"]
-        for t in trades:
-            emoji = "🟢" if t.side.value == "buy" else "🔴"
-            q = t.market_question or t.market_id
-            if len(q) > 40:
-                q = q[:37] + "..."
-            lines.append(
-                f"{emoji} **{q}**\n"
-                f"   {t.side.value.upper()} @ {t.price:.2f} | "
-                f"{t.net_amount_usdc:.2f} USDC\n"
-            )
-        text = "\n".join(lines)
+        text = "📊 **Positions en cours**\n\nAucune position ouverte."
+        keyboard = [
+            [InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_positions")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]
+        await query.edit_message_text(
+            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
 
-    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
+    # Fetch current prices for PNL calculation
+    from bot.services.polymarket import polymarket_client
+
+    # Collect unique token_ids and fetch current book prices
+    current_prices: dict[str, float] = {}
+    for t in trades:
+        if t.token_id not in current_prices:
+            current_prices[t.token_id] = 0.0
+
+    # Fetch prices in parallel
+    import asyncio
+
+    async def _fetch_price(token_id: str) -> tuple[str, float]:
+        try:
+            price = await polymarket_client.get_price(token_id)
+            return token_id, price
+        except Exception:
+            return token_id, 0.0
+
+    price_tasks = [_fetch_price(tid) for tid in current_prices]
+    price_results = await asyncio.gather(*price_tasks, return_exceptions=True)
+    for res in price_results:
+        if isinstance(res, tuple):
+            current_prices[res[0]] = res[1]
+
+    lines = ["📊 **POSITIONS EN COURS**\n━━━━━━━━━━━━━━━━━━━━\n"]
+    total_invested = 0.0
+    total_current = 0.0
+
+    for t in trades:
+        q = t.market_question or t.market_id
+        if len(q) > 45:
+            q = q[:42] + "..."
+
+        paper = " 📝" if t.is_paper else ""
+
+        # Time
+        if t.created_at:
+            time_str = t.created_at.strftime("%d/%m %H:%M")
+        else:
+            time_str = "?"
+
+        # PNL calculation
+        entry_price = t.price
+        cur_price = current_prices.get(t.token_id, 0)
+        invested = t.net_amount_usdc
+        shares = t.shares if t.shares else (invested / entry_price if entry_price > 0 else 0)
+        current_value = shares * cur_price if cur_price > 0 else 0
+        pnl_usdc = current_value - invested
+        pnl_pct = (pnl_usdc / invested * 100) if invested > 0 else 0
+
+        total_invested += invested
+        total_current += current_value if cur_price > 0 else invested
+
+        # PNL display
+        if cur_price > 0:
+            pnl_sign = "+" if pnl_usdc >= 0 else ""
+            pnl_emoji = "📈" if pnl_usdc >= 0 else "📉"
+            pnl_str = f"{pnl_emoji} {pnl_sign}{pnl_usdc:.2f} USDC ({pnl_sign}{pnl_pct:.1f}%)"
+        else:
+            pnl_str = "⏳ Prix indisponible"
+
+        lines.append(
+            f"{'🟢' if t.side.value == 'buy' else '🔴'} **{q}**{paper}\n"
+            f"   🕐 {time_str} | Entry: {entry_price:.2f}\n"
+            f"   💵 {invested:.2f} USDC | {shares:.1f} shares\n"
+            f"   {pnl_str}\n"
+        )
+
+    # Total PNL
+    total_pnl = total_current - total_invested
+    total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+    total_sign = "+" if total_pnl >= 0 else ""
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"💼 **Total investi** : {total_invested:.2f} USDC\n"
+        f"📊 **PNL total** : {total_sign}{total_pnl:.2f} USDC ({total_sign}{total_pnl_pct:.1f}%)"
+    )
+
+    text = "\n".join(lines)
+
+    keyboard = [
+        [InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_positions")],
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+    ]
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
