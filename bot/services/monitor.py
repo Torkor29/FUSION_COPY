@@ -2,12 +2,18 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional, Callable, Awaitable
 
 from bot.services.polymarket import polymarket_client, Position
 
 logger = logging.getLogger(__name__)
+
+# Ignore position changes smaller than this (in shares) to avoid noise
+MIN_SIGNAL_SIZE = 0.5
+# Cooldown per (wallet, token_id): don't re-signal same market within N seconds
+SIGNAL_COOLDOWN_S = 120
 
 
 @dataclass
@@ -48,6 +54,8 @@ class MultiMasterMonitor:
         self._on_signal = on_signal
         self._wallet_states: dict[str, WalletState] = {}
         self._is_running = False
+        # Cooldown: (wallet, token_id) → last signal timestamp
+        self._signal_cooldowns: dict[tuple[str, str], float] = {}
         self._task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
@@ -168,6 +176,8 @@ class MultiMasterMonitor:
         # New or increased positions → BUY signals
         for token_id, pos in current_map.items():
             if token_id not in known:
+                if pos.size < MIN_SIGNAL_SIZE:
+                    continue
                 signal = TradeSignal(
                     master_wallet=wallet,
                     market_id=pos.market_id,
@@ -182,6 +192,8 @@ class MultiMasterMonitor:
 
             elif pos.size > known[token_id].size:
                 added = pos.size - known[token_id].size
+                if added < MIN_SIGNAL_SIZE:
+                    continue
                 signal = TradeSignal(
                     master_wallet=wallet,
                     market_id=pos.market_id,
@@ -196,6 +208,8 @@ class MultiMasterMonitor:
 
             elif pos.size < known[token_id].size:
                 reduced = known[token_id].size - pos.size
+                if reduced < MIN_SIGNAL_SIZE:
+                    continue
                 signal = TradeSignal(
                     master_wallet=wallet,
                     market_id=pos.market_id,
@@ -208,7 +222,7 @@ class MultiMasterMonitor:
                 )
                 await self._emit_signal(signal)
 
-        # Closed positions → SELL signals
+        # Closed positions → SELL signals (full exit, always signal)
         for token_id, pos in known.items():
             if token_id not in current_map:
                 signal = TradeSignal(
@@ -226,7 +240,19 @@ class MultiMasterMonitor:
         state.positions = current_map
 
     async def _emit_signal(self, signal: TradeSignal) -> None:
-        """Emit a trade signal to the copytrade engine."""
+        """Emit a trade signal to the copytrade engine (with cooldown dedup)."""
+        key = (signal.master_wallet, signal.token_id)
+        now = time.monotonic()
+        last = self._signal_cooldowns.get(key, 0)
+        if now - last < SIGNAL_COOLDOWN_S:
+            logger.debug(
+                f"Signal cooldown: [{signal.master_wallet[:10]}...] "
+                f"{signal.token_id[:12]}... skipped (last {now - last:.0f}s ago)"
+            )
+            return
+
+        self._signal_cooldowns[key] = now
+
         logger.info(
             f"Signal [{signal.master_wallet[:10]}...]: "
             f"{signal.side} {signal.size:.2f} shares "
