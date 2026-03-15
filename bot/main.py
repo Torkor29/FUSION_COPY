@@ -82,10 +82,10 @@ def setup_scheduler(monitor: MultiMasterMonitor) -> AsyncIOScheduler:
         id="health_check",
     )
 
-    # Settle resolved paper trades every 5 minutes
+    # Settle resolved paper trades every 2 minutes (short-term markets expire fast)
     scheduler.add_job(
         settle_paper_trades,
-        "interval", minutes=5,
+        "interval", minutes=2,
         id="settle_paper_trades",
     )
 

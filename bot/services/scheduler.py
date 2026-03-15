@@ -72,8 +72,14 @@ async def settle_paper_trades() -> None:
             )
 
             settled_count = 0
+            checked_count = 0
             for market_id, trades in by_market.items():
-                resolution = await polymarket_client.check_market_resolution(market_id)
+                try:
+                    resolution = await polymarket_client.check_market_resolution(market_id)
+                except Exception as e:
+                    logger.warning(f"Failed to check resolution for {market_id[:16]}...: {e}")
+                    continue
+                checked_count += 1
                 if resolution is None:
                     continue  # Market still open
 
@@ -109,7 +115,9 @@ async def settle_paper_trades() -> None:
 
             if settled_count > 0:
                 await session.commit()
-                logger.info(f"Settled {settled_count} paper trade(s)")
+                logger.info(f"Settled {settled_count} paper trade(s) (checked {checked_count}/{len(by_market)} markets)")
+            elif checked_count > 0:
+                logger.debug(f"Checked {checked_count}/{len(by_market)} markets — none resolved yet")
 
     except Exception as e:
         logger.error(f"Error settling paper trades: {e}", exc_info=True)

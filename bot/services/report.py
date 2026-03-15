@@ -70,7 +70,8 @@ class ReportData:
     stats_all: TimeframeStats
 
     # Positions
-    open_positions: list[PositionSnapshot]
+    open_positions: list[PositionSnapshot]  # Active (price > 0)
+    expired_positions: list[PositionSnapshot]  # Expired (price = 0)
     settled_trades_count: int
     settled_pnl: float
     overall_win_rate: float
@@ -251,8 +252,26 @@ def generate_report_pdf(data: ReportData) -> io.BytesIO:
     # ═══════════════════════════════════════════
     # OPEN POSITIONS
     # ═══════════════════════════════════════════
+    # Expired positions summary (not listed individually)
+    if data.expired_positions:
+        exp_count = len(data.expired_positions)
+        exp_invested = sum(p.invested for p in data.expired_positions)
+        exp_value = sum(p.current_value for p in data.expired_positions)
+        exp_pnl = exp_value - exp_invested
+        elements.append(Paragraph(
+            f"MARCHÉS EXPIRÉS ({exp_count} positions — {exp_invested:.2f} USDC investis → "
+            f"perte estimée: {exp_pnl:.2f} USDC)", section_style
+        ))
+        elements.append(Spacer(1, 6))
+        elements.append(Paragraph(
+            "<i>Ces marchés court terme (5-15 min) ont expiré. "
+            "Le résultat final (gain/perte) sera mis à jour quand le marché sera résolu sur Polymarket.</i>",
+            ParagraphStyle("exp_note", parent=body_style, fontSize=8, textColor=colors.HexColor("#6b7280")),
+        ))
+        elements.append(Spacer(1, 12))
+
     elements.append(Paragraph(
-        f"POSITIONS OUVERTES ({len(data.open_positions)})", section_style
+        f"POSITIONS ACTIVES ({len(data.open_positions)})", section_style
     ))
 
     if data.open_positions:
@@ -371,7 +390,9 @@ async def build_report_data(
     )
 
     # ── Build position snapshots ──
+    # Only include positions that still have a live price (not expired markets)
     open_positions = []
+    expired_positions = []
     open_buys = [
         t for t in trades
         if t.side == TradeSide.BUY and not t.is_settled
@@ -381,11 +402,12 @@ async def build_report_data(
         invested = t.net_amount_usdc
         shares = t.shares or (invested / t.price if t.price > 0 else 0)
         cur_price = current_prices.get(t.token_id, 0)
-        current_val = shares * cur_price if cur_price > 0 else invested
+        # When price = 0, market is expired → position is worth $0
+        current_val = shares * cur_price  # No fallback to invested!
         pnl = current_val - invested
         pnl_pct = (pnl / invested * 100) if invested > 0 else 0
 
-        open_positions.append(PositionSnapshot(
+        snap = PositionSnapshot(
             market_question=t.market_question or t.market_id or "?",
             side=t.side.value,
             entry_price=t.price,
@@ -397,7 +419,12 @@ async def build_report_data(
             shares=shares,
             opened_at=t.created_at,
             is_paper=t.is_paper,
-        ))
+        )
+
+        if cur_price > 0:
+            open_positions.append(snap)
+        else:
+            expired_positions.append(snap)
 
     # ── Timeframe stats ──
     timeframes = [
@@ -462,7 +489,10 @@ async def build_report_data(
         ))
 
     # ── Portfolio totals ──
-    total_current_value = sum(p.current_value for p in open_positions)
+    # Include both active AND expired positions for accurate total
+    active_value = sum(p.current_value for p in open_positions)
+    expired_value = sum(p.current_value for p in expired_positions)  # mostly 0
+    total_current_value = active_value + expired_value
     portfolio_value = user.paper_balance + total_current_value
     total_pnl = portfolio_value - user.paper_initial_balance
     total_pnl_pct = (
@@ -497,6 +527,7 @@ async def build_report_data(
         stats_7d=tf_stats[3],
         stats_all=tf_stats[4],
         open_positions=open_positions,
+        expired_positions=expired_positions,
         settled_trades_count=len(settled_trades),
         settled_pnl=settled_pnl,
         overall_win_rate=overall_wr,
