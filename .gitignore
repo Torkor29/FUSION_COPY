@@ -13,6 +13,11 @@ venv/
 .idea/
 .DS_Store
 
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Docker artifacts
 *.log
 
