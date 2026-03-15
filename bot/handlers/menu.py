@@ -943,83 +943,110 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    from datetime import timedelta
+
     lines = [
         "📡 **DASHBOARD — TRADERS SUIVIS**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "_Positions & trades des comptes suivis_\n"
-        "_sur Polymarket en temps réel._\n",
+        "_Performances réelles des traders sur Polymarket._\n",
     ]
 
     total_positions = 0
-    total_trades_24h = 0
-    since_24h = int(time.time()) - 86400
+    grand_total_pnl = 0.0
+    grand_total_invested = 0.0
+    now_ts = int(time.time())
 
     for wallet in followed:
         w_short = f"{wallet[:6]}...{wallet[-4:]}"
         positions = await polymarket_client.get_positions_by_address(wallet)
+
+        # Fetch activity for 24h
         activity = await polymarket_client.get_activity_by_address(
-            wallet, limit=20, start=since_24h
+            wallet, limit=500, start=now_ts - 86400
         )
 
         n_pos = len(positions)
-        n_trades = len(activity)
         total_positions += n_pos
-        total_trades_24h += n_trades
 
-        lines.append(f"👤 `{w_short}` — **{n_pos}** pos / **{n_trades}** trades 24h")
+        lines.append(f"👤 **Trader** `{w_short}`")
 
         if not positions and not activity:
             lines.append("   _Aucune activité_\n")
             continue
 
+        # ── Activity by timeframe ──
+        timeframes_tf = [
+            ("1h", 3600), ("3h", 10800), ("5h", 18000), ("24h", 86400),
+        ]
+        tf_parts = []
+        for label, secs in timeframes_tf:
+            cutoff = now_ts - secs
+            tf_acts = [a for a in activity if a.timestamp >= cutoff]
+            if tf_acts:
+                vol = sum(a.usdc_size for a in tf_acts)
+                tf_parts.append(f"{label}:{len(tf_acts)}t/{vol:.0f}$")
+        if tf_parts:
+            lines.append(f"   📊 {' | '.join(tf_parts)}")
+
         # ── Positions ouvertes ──
         if positions:
-            positions.sort(key=lambda p: p.size, reverse=True)
+            positions.sort(key=lambda p: p.size * p.current_price, reverse=True)
 
             trader_pnl = 0.0
+            trader_invested = 0.0
             for p in positions:
-                if p.avg_price > 0:
-                    trader_pnl += (p.current_price - p.avg_price) * p.size
-            pnl_emoji = "🟢" if trader_pnl >= 0 else "🔴"
-            lines.append(f"   {pnl_emoji} P&L positions : **{trader_pnl:+.2f} USDC**")
+                invested_p = p.size * p.avg_price
+                current_p = p.size * p.current_price
+                trader_pnl += (current_p - invested_p)
+                trader_invested += invested_p
+            grand_total_pnl += trader_pnl
+            grand_total_invested += trader_invested
+
+            pnl_pct = (trader_pnl / trader_invested * 100) if trader_invested > 0 else 0
+            pnl_emoji = "📈" if trader_pnl >= 0 else "📉"
+            lines.append(
+                f"   {pnl_emoji} **P&L : {trader_pnl:+.2f} USDC ({pnl_pct:+.1f}%)**"
+                f" sur **{n_pos}** positions"
+            )
 
             for p in positions[:5]:
                 pnl_e = "📈" if p.pnl_pct >= 0 else "📉"
                 outcome = p.outcome or "?"
                 val = p.size * p.current_price
+                title = p.title[:30] + "…" if len(p.title) > 30 else p.title
                 lines.append(
-                    f"   {pnl_e} **{outcome}** @ {p.current_price:.2f} "
-                    f"({p.pnl_pct:+.1f}%) • {val:.1f}$"
+                    f"   {pnl_e} **{outcome}** @ {p.avg_price:.2f}→{p.current_price:.2f} "
+                    f"({p.pnl_pct:+.0f}%) {val:.0f}$"
                 )
+                if title:
+                    lines.append(f"      _{title}_")
             if len(positions) > 5:
                 lines.append(f"   _… +{len(positions) - 5} autres positions_")
 
-        # ── Trades récents (24h) ──
+        # ── Derniers trades ──
         if activity:
-            lines.append("   ─ Trades 24h ─")
-            for a in activity[:5]:
+            recent = activity[:3]
+            lines.append("   ─ Derniers trades ─")
+            for a in recent:
                 side_e = "🟢" if a.side == "BUY" else "🔴"
-                title = a.title[:35] + "…" if len(a.title) > 35 else a.title
                 lines.append(
                     f"   {side_e} {a.side} **{a.outcome}** • "
                     f"{a.usdc_size:.1f}$ @ {a.price:.2f}"
                 )
-                if title:
-                    lines.append(f"      _{title}_")
-            if len(activity) > 5:
-                lines.append(f"   _… +{len(activity) - 5} autres trades_")
 
         lines.append("")
 
+    # ── Totaux ──
     lines.append("━━━━━━━━━━━━━━━━━━━━")
+    grand_pnl_pct = (grand_total_pnl / grand_total_invested * 100) if grand_total_invested > 0 else 0
+    pnl_e = "📈" if grand_total_pnl >= 0 else "📉"
     lines.append(
-        f"📊 **{total_positions} positions** / "
-        f"**{total_trades_24h} trades 24h** "
-        f"sur {len(followed)} trader(s)"
+        f"{pnl_e} **TOTAL : {grand_total_pnl:+.2f} USDC ({grand_pnl_pct:+.1f}%)**\n"
+        f"💰 Investi : {grand_total_invested:.0f}$ • "
+        f"{total_positions} positions sur {len(followed)} trader(s)"
     )
     lines.append(
-        "\n_Compare avec 📋 Récap pour vérifier_\n"
-        "_que le bot a bien copié tous les trades._"
+        "\n_📋 Récap = vos trades copiés par le bot_"
     )
 
     text = "\n".join(lines)
@@ -1031,10 +1058,7 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_dashboard"),
             InlineKeyboardButton("📋 Récap", callback_data="menu_recap"),
         ],
-        [
-            InlineKeyboardButton("📄 Rapport PDF", callback_data="paper_report"),
-            InlineKeyboardButton("📊 Rapport Trader", callback_data="trader_report"),
-        ],
+        [InlineKeyboardButton("📊 Détail Trader", callback_data="trader_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
@@ -1213,8 +1237,8 @@ async def _menu_recap_impl(query) -> None:
         lines.append("")
 
     lines.append(
-        "_Compare avec 📡 Dashboard pour vérifier_\n"
-        "_qu'aucun trade n'a été raté._"
+        "_📡 Dashboard = performances réelles des traders_\n"
+        "_📋 Récap = ce que le bot a copié pour vous_"
     )
 
     text = "\n".join(lines)
@@ -1226,10 +1250,7 @@ async def _menu_recap_impl(query) -> None:
             InlineKeyboardButton("📡 Dashboard", callback_data="menu_dashboard"),
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_recap"),
         ],
-        [
-            InlineKeyboardButton("📄 Rapport PDF", callback_data="paper_report"),
-            InlineKeyboardButton("📊 Rapport Trader", callback_data="trader_report"),
-        ],
+        [InlineKeyboardButton("📄 Rapport PDF (mes trades)", callback_data="paper_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
