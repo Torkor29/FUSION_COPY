@@ -916,11 +916,23 @@ async def receive_setting_value(
         user = await get_user_by_telegram_id(session, update.effective_user.id)
         us = await get_or_create_settings(session, user)
         await update_setting(session, us, field, value)
+
+        # Sync allocated_capital → paper_balance when in paper mode
+        if field == "allocated_capital" and user.paper_trading:
+            user.paper_balance = value
+            user.paper_initial_balance = value
+            # Reset daily spent since capital changed
+            user.daily_spent_usdc = 0.0
+            await session.commit()
+
         text, keyboard = _build_main_menu(us, user.paper_trading)
 
     label = SETTING_LABELS.get(field, (field, ""))[0]
+    extra = ""
+    if field == "allocated_capital" and user.paper_trading:
+        extra = f"\n💰 Solde paper mis à jour : **{value:.0f} USDC**\n"
     await update.message.reply_text(
-        f"✅ **{label}** mis à jour : **{value}**\n\n" + text,
+        f"✅ **{label}** mis à jour : **{value}**\n{extra}\n" + text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -958,6 +970,9 @@ def get_settings_handler() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, follow_add_receive),
             ],
         },
-        fallbacks=[CommandHandler("settings", settings_command)],
+        fallbacks=[
+            CommandHandler("settings", settings_command),
+        ],
         per_user=True,
+        per_message=False,
     )

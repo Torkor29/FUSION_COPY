@@ -396,4 +396,5 @@ def get_withdraw_handler() -> ConversationHandler:
         },
         fallbacks=[CommandHandler("withdraw", withdraw_command)],
         per_user=True,
+        per_message=False,
     )

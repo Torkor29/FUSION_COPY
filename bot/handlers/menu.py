@@ -84,10 +84,14 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         ],
     ])
 
-    # Stop Copy button — only if copytrading is active (not paused)
+    # Stop / Resume Copy button — always visible
     if user.is_active and not user.is_paused:
         keyboard.append([
             InlineKeyboardButton("🛑 Stop Copy", callback_data="stop_copy"),
+        ])
+    elif user.is_paused:
+        keyboard.append([
+            InlineKeyboardButton("▶️ Reprendre le Copy", callback_data="resume_copy"),
         ])
 
     if user.paper_trading:

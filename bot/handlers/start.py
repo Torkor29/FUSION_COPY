@@ -442,4 +442,5 @@ def get_start_handler() -> ConversationHandler:
         },
         fallbacks=[CommandHandler("start", start_command)],
         per_user=True,
+        per_message=False,
     )

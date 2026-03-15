@@ -412,7 +412,9 @@ class CopyTradeEngine:
                 elapsed = time.monotonic() - start_time
                 trade.execution_time_ms = int(elapsed * 1000)
                 trade.executed_at = datetime.utcnow()
-                user.daily_spent_usdc += fee_result.gross_amount
+                # Only count daily spending for LIVE trades (paper has no limit)
+                if not is_paper:
+                    user.daily_spent_usdc += fee_result.gross_amount
                 await session.commit()
 
                 # M3 FIX: Clear PK from memory after use
@@ -590,14 +592,30 @@ class CopyTradeEngine:
         ])
 
         try:
-            await self._bot.send_message(
+            import asyncio as _asyncio
+
+            msg = await self._bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
+
+            # Auto-delete trade notification after 60 seconds
+            async def _auto_del():
+                await _asyncio.sleep(60)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            _asyncio.create_task(_auto_del())
         except Exception as e:
             logger.error(f"Failed to send notification to {user.telegram_id}: {e}")
+
+    # Rate-limit: track last error notification per user to avoid spam
+    _last_error_notify: dict[int, float] = {}
+    _ERROR_COOLDOWN = 300  # 5 minutes between identical error types
 
     async def _notify_error(
         self,
@@ -605,9 +623,23 @@ class CopyTradeEngine:
         signal: TradeSignal,
         error: str,
     ) -> None:
-        """Send error notification via Telegram."""
+        """Send error notification via Telegram (auto-deletes after 30s, rate-limited)."""
         if not self._bot:
             return
+
+        import time as _time
+        import asyncio as _asyncio
+
+        # Rate-limit: max 1 error notification per 5 min per user
+        now = _time.time()
+        last = self._last_error_notify.get(user.telegram_id, 0)
+        if now - last < self._ERROR_COOLDOWN:
+            logger.debug(
+                f"Skipping error notification for {user.telegram_id} "
+                f"(cooldown {self._ERROR_COOLDOWN}s)"
+            )
+            return
+        self._last_error_notify[user.telegram_id] = now
 
         from bot.handlers.notifications import format_trade_error
 
@@ -617,10 +649,20 @@ class CopyTradeEngine:
         )
 
         try:
-            await self._bot.send_message(
+            msg = await self._bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,
                 parse_mode="Markdown",
             )
+
+            # Auto-delete error notification after 30 seconds
+            async def _auto_del():
+                await _asyncio.sleep(30)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            _asyncio.create_task(_auto_del())
         except Exception as e:
             logger.error(f"Failed to send error notification: {e}")
