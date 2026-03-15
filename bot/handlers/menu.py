@@ -1050,6 +1050,26 @@ async def menu_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     query = update.callback_query
     await query.answer()
 
+    try:
+        return await _menu_recap_impl(query)
+    except Exception as e:
+        logger.error(f"menu_recap error: {e}", exc_info=True)
+        try:
+            await query.edit_message_text(
+                f"❌ **Erreur Récap**\n\n`{str(e)[:200]}`\n\n"
+                "Réessayez dans quelques secondes.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Réessayer", callback_data="menu_recap")],
+                    [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
+                ]),
+            )
+        except Exception:
+            pass
+
+
+async def _menu_recap_impl(query) -> None:
+    """Internal implementation of menu_recap."""
     from datetime import datetime, timezone, timedelta
     from bot.models.trade import Trade, TradeStatus, TradeSide
 
@@ -1065,12 +1085,17 @@ async def menu_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
 
+        # Filter by current mode (paper or live)
+        is_paper = user.paper_trading
         all_trades = (await session.execute(
             select(Trade).where(
                 Trade.user_id == user.id,
                 Trade.status == TradeStatus.FILLED,
+                Trade.is_paper == is_paper,
             ).order_by(Trade.created_at.desc())
         )).scalars().all()
+        # Filter out trades with no created_at to prevent comparisons with None
+        all_trades = [t for t in all_trades if t.created_at is not None]
 
     if not followed:
         await query.edit_message_text(
@@ -1108,8 +1133,9 @@ async def menu_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     global_wr = f"{(wins / closed) * 100:.0f}%" if closed > 0 else "N/A"
     global_pnl = f"{total_pnl:+.2f}" if closed > 0 else "N/A"
 
+    mode_label = "📝 PAPER" if is_paper else "💵 LIVE"
     lines = [
-        "📋 **RÉCAP — MES TRADES COPIÉS**\n"
+        f"📋 **RÉCAP — MES TRADES COPIÉS** ({mode_label})\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "_Ce que le bot a exécuté pour vous._\n",
         f"📅 Aujourd'hui : **{len(trades_today)}** trades • **{vol_today:.2f}** USDC",
@@ -1378,76 +1404,93 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     await query.answer("⏳ Génération du rapport PDF…")
 
-    from bot.models.trade import Trade, TradeStatus
-    from bot.services.polymarket import polymarket_client
-    from bot.services.report import build_report_data, generate_report_pdf
-    import asyncio
+    try:
+        from bot.models.trade import Trade, TradeStatus
+        from bot.services.polymarket import polymarket_client
+        from bot.services.report import build_report_data, generate_report_pdf
+        import asyncio
 
-    async with async_session() as session:
-        user = await get_user_by_telegram_id(session, query.from_user.id)
-        if not user:
-            return
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            if not user:
+                return
 
-        us = await get_or_create_settings(session, user)
+            us = await get_or_create_settings(session, user)
 
-        # Fetch all FILLED trades
-        result = await session.execute(
-            select(Trade).where(
-                Trade.user_id == user.id,
-                Trade.status == TradeStatus.FILLED,
-            ).order_by(Trade.created_at.desc())
+            # Fetch FILLED trades matching current mode (paper or live)
+            is_paper = user.paper_trading
+            result = await session.execute(
+                select(Trade).where(
+                    Trade.user_id == user.id,
+                    Trade.status == TradeStatus.FILLED,
+                    Trade.is_paper == is_paper,
+                ).order_by(Trade.created_at.desc())
+            )
+            trades = list(result.scalars().all())
+
+        # Fetch current prices for open positions
+        current_prices: dict[str, float] = {}
+        open_token_ids = {
+            t.token_id for t in trades
+            if not t.is_settled and t.side.value == "buy"
+        }
+
+        if open_token_ids:
+            async def _fetch_price(token_id: str) -> tuple[str, float]:
+                try:
+                    price = await polymarket_client.get_price(token_id)
+                    return token_id, price
+                except Exception:
+                    return token_id, 0.0
+
+            results = await asyncio.gather(
+                *[_fetch_price(tid) for tid in open_token_ids],
+                return_exceptions=True,
+            )
+            for res in results:
+                if isinstance(res, tuple):
+                    current_prices[res[0]] = res[1]
+
+        # Build report data and generate PDF
+        report_data = await build_report_data(user, us, trades, current_prices)
+        pdf_buffer = generate_report_pdf(report_data)
+
+        # Send PDF
+        from datetime import datetime, timezone
+        filename = (
+            f"wenpolymarket_report_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
         )
-        trades = list(result.scalars().all())
 
-    # Fetch current prices for open positions
-    current_prices: dict[str, float] = {}
-    open_token_ids = {
-        t.token_id for t in trades
-        if not t.is_settled and t.side.value == "buy"
-    }
-
-    if open_token_ids:
-        async def _fetch_price(token_id: str) -> tuple[str, float]:
-            try:
-                price = await polymarket_client.get_price(token_id)
-                return token_id, price
-            except Exception:
-                return token_id, 0.0
-
-        results = await asyncio.gather(
-            *[_fetch_price(tid) for tid in open_token_ids],
-            return_exceptions=True,
+        await query.message.reply_document(
+            document=pdf_buffer,
+            filename=filename,
+            caption=(
+                f"📄 **Rapport de performance WENPOLYMARKET**\n"
+                f"{'📝 Paper Trading' if user.paper_trading else '💵 Live Trading'}\n"
+                f"💼 Portefeuille : {report_data.portfolio_value:.2f} USDC\n"
+                f"{'📈' if report_data.total_pnl >= 0 else '📉'} "
+                f"PNL : {'+' if report_data.total_pnl >= 0 else ''}"
+                f"{report_data.total_pnl:.2f} USDC "
+                f"({'+' if report_data.total_pnl_pct >= 0 else ''}"
+                f"{report_data.total_pnl_pct:.1f}%)"
+            ),
+            parse_mode="Markdown",
         )
-        for res in results:
-            if isinstance(res, tuple):
-                current_prices[res[0]] = res[1]
-
-    # Build report data and generate PDF
-    report_data = await build_report_data(user, us, trades, current_prices)
-    pdf_buffer = generate_report_pdf(report_data)
-
-    # Send PDF
-    from datetime import datetime, timezone
-    filename = (
-        f"wenpolymarket_report_"
-        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
-    )
-
-    await query.message.reply_document(
-        document=pdf_buffer,
-        filename=filename,
-        caption=(
-            f"📄 **Rapport de performance WENPOLYMARKET**\n"
-            f"{'📝 Paper Trading' if user.paper_trading else '💵 Live Trading'}\n"
-            f"💼 Portefeuille : {report_data.portfolio_value:.2f} USDC\n"
-            f"{'📈' if report_data.total_pnl >= 0 else '📉'} "
-            f"PNL : {'+' if report_data.total_pnl >= 0 else ''}"
-            f"{report_data.total_pnl:.2f} USDC "
-            f"({'+' if report_data.total_pnl_pct >= 0 else ''}"
-            f"{report_data.total_pnl_pct:.1f}%)"
-        ),
-        parse_mode="Markdown",
-    )
+    except Exception as e:
+        logger.error(f"paper_report error: {e}", exc_info=True)
+        try:
+            await query.edit_message_text(
+                f"❌ **Erreur génération PDF**\n\n`{str(e)[:300]}`\n\n"
+                "Réessayez dans quelques secondes.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Réessayer", callback_data="paper_report")],
+                    [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
+                ]),
+            )
+        except Exception:
+            pass
 
 
 async def paper_set_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
