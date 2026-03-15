@@ -4,7 +4,7 @@ import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, ContextTypes
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 
 from bot.config import settings
 from bot.db.session import async_session
@@ -94,6 +94,42 @@ async def _send_main_menu(message, tg_user, text_override: str | None = None) ->
             return
 
         text, keyboard = _build_main_menu_content(tg_user, user)
+
+        # Fetch last copied trade per followed trader
+        us = await get_or_create_settings(session, user)
+        followed = us.followed_wallets or []
+        if followed:
+            from bot.models.trade import Trade, TradeStatus
+            last_trades_lines: list[str] = []
+            for wallet in followed:
+                w_short = f"{wallet[:6]}...{wallet[-4:]}"
+                result = await session.execute(
+                    select(Trade).where(
+                        Trade.user_id == user.id,
+                        Trade.master_wallet == wallet,
+                        Trade.status == TradeStatus.FILLED,
+                    ).order_by(desc(Trade.created_at)).limit(1)
+                )
+                last = result.scalar_one_or_none()
+                if last and last.created_at:
+                    dt = last.created_at.strftime("%d/%m %H:%M")
+                    side = "🟢 BUY" if last.side.value == "buy" else "🔴 SELL"
+                    q = last.market_question or last.market_id or "?"
+                    if len(q) > 30:
+                        q = q[:27] + "..."
+                    last_trades_lines.append(
+                        f"  `{w_short}` → {side} {dt}\n"
+                        f"    _{q}_ • {last.net_amount_usdc:.2f}$"
+                    )
+                else:
+                    last_trades_lines.append(
+                        f"  `{w_short}` → _Aucun trade copié_"
+                    )
+            text += (
+                "\n📡 **Dernière activité copiée :**\n"
+                + "\n".join(last_trades_lines)
+                + "\n"
+            )
 
     header = text_override or text
 
@@ -232,7 +268,13 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         trades = list(result.scalars().all())
 
     if not trades:
-        text = "📊 **Positions en cours**\n\nAucune position ouverte."
+        text = (
+            "📊 **POSITIONS EN COURS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "_Positions = paris achetés et toujours ouverts_\n"
+            "_sur Polymarket (pas encore vendus/résolus)._\n\n"
+            "Aucune position ouverte."
+        )
         keyboard = [
             [InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_positions")],
             [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
@@ -267,7 +309,12 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if isinstance(res, tuple):
             current_prices[res[0]] = res[1]
 
-    lines = ["📊 **POSITIONS EN COURS**\n━━━━━━━━━━━━━━━━━━━━\n"]
+    lines = [
+        "📊 **POSITIONS EN COURS**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "_Positions = paris achetés et toujours ouverts_\n"
+        "_sur Polymarket (pas encore vendus/résolus)._\n"
+    ]
     total_invested = 0.0
     total_current = 0.0
 
@@ -351,10 +398,21 @@ async def menu_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         trades = result.scalars().all()
 
     if not trades:
-        text = "📜 **Historique**\n\nAucun trade enregistré."
+        text = (
+            "📜 **HISTORIQUE**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "_Historique = tous les trades passés (achats,_\n"
+            "_ventes, réussis, échoués, annulés)._\n\n"
+            "Aucun trade enregistré."
+        )
     else:
         status_emoji = {"filled": "✅", "failed": "❌", "cancelled": "🚫", "pending": "🟡", "executing": "🔄"}
-        lines = ["📜 **HISTORIQUE**\n━━━━━━━━━━━━━━━━━━━━\n"]
+        lines = [
+            "📜 **HISTORIQUE**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "_Historique = tous les trades passés (achats,_\n"
+            "_ventes, réussis, échoués, annulés)._\n"
+        ]
         for t in trades:
             emoji = status_emoji.get(t.status.value, "❓")
             q = t.market_question or t.market_id
@@ -479,12 +537,19 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "**Depuis le menu principal :**\n\n"
         "👛 **Wallets** — Voir vos soldes (USDC, POL)\n"
-        "📊 **Positions** — Trades copiés en cours\n"
+        "📊 **Positions** — Paris ouverts (achetés, pas encore résolus)\n"
+        "📜 **Historique** — Tous les trades passés (achats, ventes, échecs…)\n"
         "💳 **Déposer** — Carte, exchange, bridge\n"
         "💸 **Retirer** — Envoyer vos USDC ailleurs\n"
-        "📜 **Historique** — Derniers trades\n"
         "👥 **Traders suivis** — Wallets copiés\n"
+        "📡 **Dashboard** — Activité LIVE des traders suivis sur Polymarket\n"
+        "📋 **Récap** — Ce que le bot a copié pour vous (PNL, win rate)\n"
         "⚙️ **Paramètres** — Capital, sizing, risques, traders\n\n"
+        "**📊 Positions vs 📜 Historique :**\n"
+        "• _Positions_ = vos paris encore ouverts (non résolus)\n"
+        "• _Historique_ = tout ce qui s'est passé (buy, sell, réussis ou non)\n"
+        "• _Dashboard_ = ce que vos traders font sur Polymarket\n"
+        "• _Récap_ = ce que le bot a copié pour vous\n\n"
         "**Comment ça marche :**\n"
         "1. Configurez un wallet Polygon\n"
         "2. Déposez des USDC dessus\n"
@@ -1029,7 +1094,8 @@ async def menu_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "_Ce que le bot a exécuté pour vous._\n",
         f"📅 Aujourd'hui : **{len(trades_today)}** trades • **{vol_today:.2f}** USDC",
         f"📆 Cette semaine : **{len(trades_week)}** trades • **{vol_week:.2f}** USDC",
-        f"📊 Win rate : **{global_wr}** • P&L : **{global_pnl} USDC**\n",
+        f"📊 Win rate : **{global_wr}** • P&L réalisé : **{global_pnl} USDC**",
+        f"_⚠️ P&L = uniquement les trades fermés (vendus/résolus)._\n",
         "━━━━━━━━━━━━━━━━━━━━",
         "**DÉTAIL PAR TRADER COPIÉ**\n",
     ]
@@ -1446,6 +1512,42 @@ async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         text, keyboard = _build_main_menu_content(tg_user, user)
+
+        # Add last copied trade per followed trader
+        us = await get_or_create_settings(session, user)
+        followed = us.followed_wallets or []
+        if followed:
+            from bot.models.trade import Trade, TradeStatus
+            last_trades_lines: list[str] = []
+            for wallet in followed:
+                w_short = f"{wallet[:6]}...{wallet[-4:]}"
+                result = await session.execute(
+                    select(Trade).where(
+                        Trade.user_id == user.id,
+                        Trade.master_wallet == wallet,
+                        Trade.status == TradeStatus.FILLED,
+                    ).order_by(desc(Trade.created_at)).limit(1)
+                )
+                last = result.scalar_one_or_none()
+                if last and last.created_at:
+                    dt = last.created_at.strftime("%d/%m %H:%M")
+                    side = "🟢 BUY" if last.side.value == "buy" else "🔴 SELL"
+                    q = last.market_question or last.market_id or "?"
+                    if len(q) > 30:
+                        q = q[:27] + "..."
+                    last_trades_lines.append(
+                        f"  `{w_short}` → {side} {dt}\n"
+                        f"    _{q}_ • {last.net_amount_usdc:.2f}$"
+                    )
+                else:
+                    last_trades_lines.append(
+                        f"  `{w_short}` → _Aucun trade copié_"
+                    )
+            text += (
+                "\n📡 **Dernière activité copiée :**\n"
+                + "\n".join(last_trades_lines)
+                + "\n"
+            )
 
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
