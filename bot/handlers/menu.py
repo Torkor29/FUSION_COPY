@@ -2081,4 +2081,6 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(stop_copy, pattern="^stop_copy$"),
         CallbackQueryHandler(resume_copy, pattern="^resume_copy$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
+        # Fallback: "Accéder au menu principal" quand ConversationHandler /start est terminé
+        CallbackQueryHandler(menu_back, pattern="^onboard_menu_main$"),
     ]

@@ -440,7 +440,10 @@ def get_start_handler() -> ConversationHandler:
                 CallbackQueryHandler(onboard_cancel, pattern="^onboard_cancel$"),
             ],
         },
-        fallbacks=[CommandHandler("start", start_command)],
+        fallbacks=[
+            CommandHandler("start", start_command),
+            CallbackQueryHandler(onboard_menu_main, pattern="^onboard_menu_main$"),
+        ],
         per_user=True,
         per_message=False,
     )
