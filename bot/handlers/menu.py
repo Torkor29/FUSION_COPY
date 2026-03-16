@@ -79,8 +79,8 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
         ],
         [
-            InlineKeyboardButton("📡 Dashboard", callback_data="menu_dashboard"),
-            InlineKeyboardButton("📋 Récap", callback_data="menu_recap"),
+            InlineKeyboardButton("📡 Activité traders", callback_data="menu_dashboard"),
+            InlineKeyboardButton("📋 Mes copies", callback_data="menu_recap"),
         ],
         [
             InlineKeyboardButton("🔍 Scanner traders", callback_data="menu_scanner"),
@@ -648,35 +648,78 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
-    text = (
-        "❓ **AIDE — WENPOLYMARKET**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "**Depuis le menu principal :**\n\n"
-        "👛 **Wallets** — Voir vos soldes (USDC, POL)\n"
-        "📊 **Positions** — Paris ouverts (achetés, pas encore résolus)\n"
-        "📜 **Historique** — Tous les trades passés (achats, ventes, échecs…)\n"
-        "💳 **Déposer** — Carte, exchange, bridge\n"
-        "💸 **Retirer** — Envoyer vos USDC ailleurs\n"
-        "👥 **Traders suivis** — Wallets copiés\n"
-        "📡 **Dashboard** — Activité LIVE des traders suivis sur Polymarket\n"
-        "📋 **Récap** — Ce que le bot a copié pour vous (PNL, win rate)\n"
-        "⚙️ **Paramètres** — Capital, sizing, risques, traders\n\n"
-        "**📊 Positions vs 📜 Historique :**\n"
-        "• _Positions_ = vos paris encore ouverts (non résolus)\n"
-        "• _Historique_ = tout ce qui s'est passé (buy, sell, réussis ou non)\n"
-        "• _Dashboard_ = ce que vos traders font sur Polymarket\n"
-        "• _Récap_ = ce que le bot a copié pour vous\n\n"
-        "**Comment ça marche :**\n"
-        "1. Configurez un wallet Polygon\n"
-        "2. Déposez des USDC dessus\n"
-        "3. Choisissez vos traders dans Paramètres\n"
-        "4. Les trades sont copiés automatiquement\n"
-        "5. Frais : 1% par trade copié\n\n"
-        "🔒 Clés chiffrées AES-256 • Jamais exposées en clair\n"
-        "📝 Paper Trading activé par défaut (sans fonds réels)"
-    )
+    # Page 1 by default, page 2 if callback says so
+    page = 2 if query.data == "menu_help_2" else 1
 
-    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
+    if page == 1:
+        text = (
+            "❓ **GUIDE COMPLET — WENPOLYMARKET**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**🏠 MENU PRINCIPAL**\n\n"
+            "👛 **Wallets**\n"
+            "  Vos soldes en temps réel (USDC, POL/MATIC).\n"
+            "  Changer de wallet actif, en ajouter un nouveau.\n\n"
+            "📊 **Positions**\n"
+            "  Vos paris ouverts sur Polymarket (non résolus).\n"
+            "  Prix d'entrée → prix actuel, PNL en cours.\n\n"
+            "📜 **Historique**\n"
+            "  Tous vos trades passés : achats, ventes,\n"
+            "  réussis ou échoués, avec montants et dates.\n\n"
+            "👥 **Traders suivis**\n"
+            "  La liste des traders que vous copiez.\n"
+            "  Pour chaque trader :\n"
+            "  • 📊 Rapport détaillé (positions, activité, PNL)\n"
+            "  • 🎯 Analyse par catégorie (BTC, ETH, Sports…)\n"
+            "    + filtres pour exclure certaines catégories\n"
+            "  • ❌ Retirer un trader\n"
+            "  • ➕ Ajouter un nouveau trader\n\n"
+            "⚙️ **Paramètres**\n"
+            "  Capital alloué, mode de sizing (fixe, %,\n"
+            "  proportionnel, Kelly), stop-loss, take-profit,\n"
+            "  limites de trade, délai de copie.\n"
+        )
+        keyboard = [
+            [InlineKeyboardButton("▶️ Page 2/2", callback_data="menu_help_2")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]
+    else:
+        text = (
+            "❓ **GUIDE COMPLET — PAGE 2/2**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**📡 Activité traders** (Dashboard)\n"
+            "  Ce que vos traders font EN DIRECT sur\n"
+            "  Polymarket. Vue globale de tous les traders :\n"
+            "  activité par timeframe (1h/3h/5h/24h),\n"
+            "  positions ouvertes, PNL. Rapports HTML + PDF.\n\n"
+            "**📋 Mes copies** (Récap)\n"
+            "  Ce que LE BOT a copié pour vous.\n"
+            "  Vos trades copiés, PNL réalisé et non-réalisé,\n"
+            "  win rate, statistiques. Rapports HTML + PDF.\n\n"
+            "**🔍 Scanner traders**\n"
+            "  Recherche intelligente de traders à suivre.\n"
+            "  Filtrez par catégorie (Crypto, Sports, Politics…),\n"
+            "  bénéfice (1D/1W/1M), volume, nombre de marchés.\n"
+            "  Ajoutez un trader trouvé en un clic.\n\n"
+            "**📝 Paper Wallet**\n"
+            "  Mode simulation sans risque. Même logique de\n"
+            "  copy, mais avec de l'argent virtuel. Parfait pour\n"
+            "  tester un trader avant de risquer des vrais USDC.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "**COMMENT COMMENCER :**\n"
+            "1️⃣ Le bot crée votre wallet Polygon automatiquement\n"
+            "2️⃣ Allez dans **👥 Traders suivis** → ajoutez un wallet\n"
+            "3️⃣ Le bot copie automatiquement leurs trades\n"
+            "4️⃣ Mode Paper par défaut (0 risque)\n"
+            "5️⃣ Passez en réel quand vous êtes prêt\n\n"
+            "💰 Frais : 1% par trade copié\n"
+            "🔒 Clés chiffrées AES-256 — jamais exposées\n"
+            "⚡ Copie en < 15 secondes après le trader"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Page 1/2", callback_data="menu_help")],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]
+
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -3488,6 +3531,7 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_bridge, pattern="^menu_bridge$"),
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
+        CallbackQueryHandler(menu_help, pattern="^menu_help_2$"),
         CallbackQueryHandler(menu_dashboard, pattern="^menu_dashboard$"),
         CallbackQueryHandler(menu_recap, pattern="^menu_recap$"),
         CallbackQueryHandler(menu_switch_wallet, pattern="^menu_switch_wallet$"),
