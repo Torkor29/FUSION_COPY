@@ -1090,7 +1090,7 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_dashboard"),
             InlineKeyboardButton("📋 Récap", callback_data="menu_recap"),
         ],
-        [InlineKeyboardButton("📄 Rapport PDF (traders)", callback_data="dashboard_report")],
+        [InlineKeyboardButton("📊 Rapport interactif (traders)", callback_data="dashboard_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
@@ -1274,7 +1274,7 @@ async def _menu_recap_impl(query) -> None:
             InlineKeyboardButton("📡 Dashboard", callback_data="menu_dashboard"),
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_recap"),
         ],
-        [InlineKeyboardButton("📄 Rapport PDF (mes trades)", callback_data="paper_report")],
+        [InlineKeyboardButton("📊 Rapport interactif (mes trades)", callback_data="paper_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
@@ -1491,7 +1491,7 @@ async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     keyboard = [
         [
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_paper"),
-            InlineKeyboardButton("📄 Rapport PDF", callback_data="paper_report"),
+            InlineKeyboardButton("📊 Rapport interactif", callback_data="paper_report"),
         ],
         [
             InlineKeyboardButton("💰 Changer solde", callback_data="paper_set_balance"),
@@ -1512,7 +1512,8 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         from bot.models.trade import Trade, TradeStatus
         from bot.services.polymarket import polymarket_client
-        from bot.services.report import build_recap_report_data, generate_recap_report_pdf
+        from bot.services.report import build_recap_report_data
+        from bot.services.report_html import generate_recap_report_html
         import asyncio
 
         async with async_session() as session:
@@ -1555,29 +1556,30 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 if isinstance(res, tuple):
                     current_prices[res[0]] = res[1]
 
-        # Build report data and generate PDF
+        # Build report data and generate HTML
         report_data = await build_recap_report_data(user, us, trades, current_prices)
-        pdf_buffer = generate_recap_report_pdf(report_data)
+        html_buffer = generate_recap_report_html(report_data)
 
-        # Send PDF
+        # Send HTML file
         from datetime import datetime, timezone
         filename = (
             f"wenpolymarket_recap_"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.html"
         )
 
         await query.message.reply_document(
-            document=pdf_buffer,
+            document=html_buffer,
             filename=filename,
             caption=(
-                f"📄 **Rapport Recap — Mes trades copies**\n"
+                f"📊 **Rapport Recap — Mes trades copies**\n"
                 f"{'📝 Paper Trading' if user.paper_trading else '💵 Live Trading'}\n"
                 f"💼 Portefeuille : {report_data.portfolio_value:.2f} USDC\n"
                 f"{'📈' if report_data.total_pnl >= 0 else '📉'} "
                 f"PNL : {'+' if report_data.total_pnl >= 0 else ''}"
                 f"{report_data.total_pnl:.2f} USDC "
                 f"({'+' if report_data.total_pnl_pct >= 0 else ''}"
-                f"{report_data.total_pnl_pct:.1f}%)"
+                f"{report_data.total_pnl_pct:.1f}%)\n\n"
+                f"_Ouvrir dans un navigateur pour voir le rapport interactif._"
             ),
             parse_mode="Markdown",
         )
@@ -1598,12 +1600,13 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def dashboard_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate and send a PDF report of followed traders' performance."""
+    """Generate and send an HTML report of followed traders' performance."""
     query = update.callback_query
     await query.answer("⏳ Génération du rapport traders…")
 
     try:
-        from bot.services.report import build_trader_report_data, generate_trader_report_pdf
+        from bot.services.report import build_trader_report_data
+        from bot.services.report_html import generate_trader_report_html
 
         async with async_session() as session:
             user = await get_user_by_telegram_id(session, query.from_user.id)
@@ -1628,26 +1631,27 @@ async def dashboard_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         # Build report data from Polymarket API
         report_data = await build_trader_report_data(username, followed)
-        pdf_buffer = generate_trader_report_pdf(report_data)
+        html_buffer = generate_trader_report_html(report_data)
 
-        # Send PDF
+        # Send HTML file
         from datetime import datetime, timezone
         filename = (
             f"wenpolymarket_traders_"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.html"
         )
 
         total_pnl = report_data.grand_unrealized
         await query.message.reply_document(
-            document=pdf_buffer,
+            document=html_buffer,
             filename=filename,
             caption=(
-                f"📄 **Rapport Dashboard — Traders suivis**\n"
+                f"📊 **Rapport Dashboard — Traders suivis**\n"
                 f"👥 {len(report_data.traders)} trader(s) | "
                 f"{report_data.total_open_positions} positions ouvertes\n"
                 f"{'📈' if total_pnl >= 0 else '📉'} "
-                f"PNL total : {'+' if total_pnl >= 0 else ''}"
-                f"{total_pnl:.2f} USDC"
+                f"PNL ouvert : {'+' if total_pnl >= 0 else ''}"
+                f"{total_pnl:.2f} USDC\n\n"
+                f"_Ouvrir dans un navigateur pour voir le rapport interactif._"
             ),
             parse_mode="Markdown",
         )
@@ -1655,7 +1659,7 @@ async def dashboard_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.error(f"dashboard_report error: {e}", exc_info=True)
         try:
             await query.edit_message_text(
-                f"❌ **Erreur generation PDF traders**\n\n`{str(e)[:300]}`\n\n"
+                f"❌ **Erreur generation rapport traders**\n\n`{str(e)[:300]}`\n\n"
                 "Reessayez dans quelques secondes.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
