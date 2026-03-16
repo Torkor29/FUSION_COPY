@@ -1,10 +1,9 @@
 """PDF report generation — two report types:
 
 1. **Trader Report (Dashboard)**: Real performance of followed traders on Polymarket
-   - Per-trader breakdown with 1h, 24h, 7j stats
-   - Open positions = unrealized PNL
-   - Resolved positions within timeframe = realized PNL
-   - Global totals
+   - Per-trader breakdown with activity stats (1h, 24h, 7j)
+   - Open positions = unrealized PNL (accurate from API)
+   - Note: historical PNL not available via public API
 
 2. **Recap Report (Our Trades)**: What the bot copied for us (paper or live)
    - Same timeframe structure (1h, 24h, 7j)
@@ -24,7 +23,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
-    PageBreak,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,11 +74,19 @@ class TraderSection:
     stats_24h: TimeframeStats = field(default_factory=lambda: TimeframeStats("24h"))
     stats_7d: TimeframeStats = field(default_factory=lambda: TimeframeStats("7j"))
     open_positions: list[PositionSnapshot] = field(default_factory=list)
-    resolved_positions: list[PositionSnapshot] = field(default_factory=list)
     total_unrealized: float = 0.0
-    total_realized: float = 0.0
     total_invested: float = 0.0
     total_current: float = 0.0
+    # Profile stats (from page scraping)
+    username: str = ""
+    pseudonym: str = ""
+    pnl_total: float = 0.0
+    pnl_1d: float = 0.0
+    pnl_1w: float = 0.0
+    pnl_1m: float = 0.0
+    volume: float = 0.0
+    markets_traded: int = 0
+    has_profile: bool = False  # True if profile data was fetched
 
 
 @dataclass
@@ -89,9 +95,8 @@ class TraderReportData:
     generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     username: str = ""
     traders: list[TraderSection] = field(default_factory=list)
-    # Global totals
+    # Global totals (open positions only — accurate)
     grand_unrealized: float = 0.0
-    grand_realized: float = 0.0
     grand_invested: float = 0.0
     grand_current: float = 0.0
     total_open_positions: int = 0
@@ -164,6 +169,11 @@ def _get_styles():
         "SmallText", parent=styles["Normal"],
         fontSize=8, textColor=colors.HexColor("#94a3b8"),
     )
+    note_style = ParagraphStyle(
+        "NoteText", parent=styles["Normal"],
+        fontSize=8, textColor=colors.HexColor("#6b7280"),
+        spaceAfter=6,
+    )
     header_cell = ParagraphStyle(
         "HeaderCell", parent=body_style,
         fontSize=8, textColor=colors.white,
@@ -176,6 +186,7 @@ def _get_styles():
         "subsection": subsection_style,
         "body": body_style,
         "small": small_style,
+        "note": note_style,
         "header_cell": header_cell,
     }
 
@@ -202,8 +213,29 @@ def _hr():
     )
 
 
-def _timeframe_table(stats_list: list[TimeframeStats], s) -> Table:
-    """Build a timeframe performance table."""
+def _activity_table(stats_list: list[TimeframeStats], s) -> Table:
+    """Build an activity-only timeframe table (trades, volume, B/S)."""
+    header = ["Periode", "Trades", "Buys", "Sells", "Volume"]
+    rows = [
+        [Paragraph(h, s["header_cell"]) for h in header]
+    ]
+    for st in stats_list:
+        trades_str = f"{st.trades_count}+" if st.trades_count >= 500 else str(st.trades_count)
+        rows.append([
+            Paragraph(st.label, s["body"]),
+            Paragraph(trades_str, s["body"]),
+            Paragraph(str(st.buys), s["body"]),
+            Paragraph(str(st.sells), s["body"]),
+            Paragraph(f"{st.volume_usdc:.0f}$", s["body"]),
+        ])
+
+    table = Table(rows, colWidths=[50, 50, 50, 50, 65], repeatRows=1)
+    table.setStyle(_TABLE_STYLE)
+    return table
+
+
+def _recap_timeframe_table(stats_list: list[TimeframeStats], s) -> Table:
+    """Build a timeframe table for recap report (includes PNL columns)."""
     header = ["Periode", "Trades", "B/S", "Volume", "PNL non-realise", "PNL realise", "W/L"]
     rows = [
         [Paragraph(h, s["header_cell"]) for h in header]
@@ -212,9 +244,10 @@ def _timeframe_table(stats_list: list[TimeframeStats], s) -> Table:
         wr = f"{st.wins}W/{st.losses}L" if (st.wins + st.losses) > 0 else "-"
         c_unr = _pnl_color(st.unrealized_pnl)
         c_rea = _pnl_color(st.realized_pnl)
+        trades_str = f"{st.trades_count}+" if st.trades_count >= 500 else str(st.trades_count)
         rows.append([
             Paragraph(st.label, s["body"]),
-            Paragraph(str(st.trades_count), s["body"]),
+            Paragraph(trades_str, s["body"]),
             Paragraph(f"{st.buys}B/{st.sells}S", s["body"]),
             Paragraph(f"{st.volume_usdc:.0f}$", s["body"]),
             Paragraph(f'<font color="{c_unr}">{_pnl_str(st.unrealized_pnl)}$</font>', s["body"]),
@@ -228,18 +261,20 @@ def _timeframe_table(stats_list: list[TimeframeStats], s) -> Table:
 
 
 def _positions_table(positions: list[PositionSnapshot], s, max_rows: int = 15) -> Table:
-    """Build a positions table."""
+    """Build a positions table. PNL uses pnl_usdc field (not recomputed)."""
     header = ["Marche", "Side", "Entry", "Now", "Investi", "Valeur", "PNL", "%"]
     rows = [
         [Paragraph(h, s["header_cell"]) for h in header]
     ]
 
+    total_pnl = 0.0
     total_inv = 0.0
     total_val = 0.0
 
     for p in positions[:max_rows]:
         total_inv += p.invested
         total_val += p.current_value
+        total_pnl += p.pnl_usdc
         title = p.title[:22] + ".." if len(p.title) > 22 else p.title
         c = _pnl_color(p.pnl_usdc)
         rows.append([
@@ -257,9 +292,11 @@ def _positions_table(positions: list[PositionSnapshot], s, max_rows: int = 15) -
         remaining = positions[max_rows:]
         r_inv = sum(p.invested for p in remaining)
         r_val = sum(p.current_value for p in remaining)
-        r_pnl = r_val - r_inv
+        r_pnl = sum(p.pnl_usdc for p in remaining)
         total_inv += r_inv
         total_val += r_val
+        total_pnl += r_pnl
+        c_r = _pnl_color(r_pnl)
         rows.append([
             Paragraph(f"<i>+{len(remaining)} autres</i>", s["body"]),
             Paragraph("", s["body"]),
@@ -267,14 +304,13 @@ def _positions_table(positions: list[PositionSnapshot], s, max_rows: int = 15) -
             Paragraph("", s["body"]),
             Paragraph(f"{r_inv:.1f}$", s["body"]),
             Paragraph(f"{r_val:.1f}$", s["body"]),
-            Paragraph(f"{_pnl_str(r_pnl)}$", s["body"]),
+            Paragraph(f'<font color="{c_r}">{_pnl_str(r_pnl)}$</font>', s["body"]),
             Paragraph("", s["body"]),
         ])
 
-    # Total row
-    t_pnl = total_val - total_inv
-    t_pct = (t_pnl / total_inv * 100) if total_inv > 0 else 0
-    c = _pnl_color(t_pnl)
+    # Total row — uses sum of pnl_usdc (NOT total_val - total_inv)
+    t_pct = (total_pnl / total_inv * 100) if total_inv > 0 else 0
+    c = _pnl_color(total_pnl)
     rows.append([
         Paragraph("<b>TOTAL</b>", s["body"]),
         Paragraph("", s["body"]),
@@ -282,7 +318,7 @@ def _positions_table(positions: list[PositionSnapshot], s, max_rows: int = 15) -
         Paragraph("", s["body"]),
         Paragraph(f"<b>{total_inv:.1f}$</b>", s["body"]),
         Paragraph(f"<b>{total_val:.1f}$</b>", s["body"]),
-        Paragraph(f'<b><font color="{c}">{_pnl_str(t_pnl)}$</font></b>', s["body"]),
+        Paragraph(f'<b><font color="{c}">{_pnl_str(total_pnl)}$</font></b>', s["body"]),
         Paragraph(f'<b><font color="{c}">{_pnl_str(t_pct)}%</font></b>', s["body"]),
     ])
 
@@ -325,7 +361,11 @@ def _footer(elements, generated_at: datetime, s):
 # ═══════════════════════════════════════════════════════════════
 
 def generate_trader_report_pdf(data: TraderReportData) -> io.BytesIO:
-    """Generate a PDF report of followed traders' performance."""
+    """Generate a PDF report of followed traders' performance.
+
+    Only shows OPEN positions (accurate from API).
+    Historical PNL is not available via public API.
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -348,9 +388,8 @@ def generate_trader_report_pdf(data: TraderReportData) -> io.BytesIO:
     # ── Global Summary ──
     elements.append(Paragraph("RESUME GLOBAL", s["section"]))
 
-    total_pnl = data.grand_unrealized + data.grand_realized
-    c = _pnl_color(total_pnl)
     pct = (data.grand_unrealized / data.grand_invested * 100) if data.grand_invested > 0 else 0
+    c_unr = _pnl_color(data.grand_unrealized)
 
     summary = [
         ["Traders suivis", str(len(data.traders))],
@@ -358,18 +397,9 @@ def generate_trader_report_pdf(data: TraderReportData) -> io.BytesIO:
         ["Capital investi (ouvert)", f"{data.grand_invested:.2f} USDC"],
         ["Valeur actuelle", f"{data.grand_current:.2f} USDC"],
         [
-            "PNL non-realise (ouvert)",
-            f'<font color="{_pnl_color(data.grand_unrealized)}">'
+            "PNL positions ouvertes",
+            f'<font color="{c_unr}">'
             f"<b>{_pnl_str(data.grand_unrealized)} USDC ({_pnl_str(pct)}%)</b></font>",
-        ],
-        [
-            "PNL realise (resolus)",
-            f'<font color="{_pnl_color(data.grand_realized)}">'
-            f"<b>{_pnl_str(data.grand_realized)} USDC</b></font>",
-        ],
-        [
-            "PNL TOTAL",
-            f'<font color="{c}"><b>{_pnl_str(total_pnl)} USDC</b></font>',
         ],
     ]
     summary_table = Table(
@@ -385,49 +415,89 @@ def generate_trader_report_pdf(data: TraderReportData) -> io.BytesIO:
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
     ]))
     elements.append(summary_table)
+    elements.append(Spacer(1, 4))
+
+    # Check if any trader has profile data
+    has_profiles = any(t.has_profile for t in data.traders)
+    if has_profiles:
+        elements.append(Paragraph(
+            "<i>PNL total, 24h, 7j et 30j sont extraits des profils Polymarket. "
+            "Les positions ouvertes montrent le PNL non-realise en temps reel.</i>",
+            s["note"],
+        ))
+    else:
+        elements.append(Paragraph(
+            "<i>Note : seules les positions ouvertes sont affichees. "
+            "Le PNL historique sera disponible si le profil Polymarket est public.</i>",
+            s["note"],
+        ))
 
     # ── Per-Trader Sections ──
     for i, trader in enumerate(data.traders):
         if i > 0:
             elements.append(Spacer(1, 8))
         elements.append(_hr())
-        elements.append(Paragraph(
-            f"TRADER : {trader.wallet_short}", s["section"]
-        ))
 
-        # Trader summary line
-        t_total = trader.total_unrealized + trader.total_realized
-        c_t = _pnl_color(t_total)
-        elements.append(Paragraph(
-            f'Positions ouvertes : {len(trader.open_positions)} | '
-            f'Resolues : {len(trader.resolved_positions)} | '
-            f'Investi : {trader.total_invested:.0f}$ | '
-            f'PNL : <font color="{c_t}"><b>{_pnl_str(t_total)}$</b></font>',
-            s["body"],
-        ))
-        elements.append(Spacer(1, 6))
+        # Title with username if available
+        title = f"TRADER : {trader.wallet_short}"
+        if trader.pseudonym:
+            title = f"TRADER : {trader.pseudonym} ({trader.wallet_short})"
+        elements.append(Paragraph(title, s["section"]))
 
-        # Timeframe stats
-        elements.append(Paragraph("Performance par periode", s["subsection"]))
-        elements.append(_timeframe_table(
+        # ── Profile stats (from Polymarket page) ──
+        if trader.has_profile:
+            profile_rows = [
+                ["PNL Total", f'<font color="{_pnl_color(trader.pnl_total)}"><b>{_pnl_str(trader.pnl_total)}$</b></font>'],
+                ["PNL 24h", f'<font color="{_pnl_color(trader.pnl_1d)}"><b>{_pnl_str(trader.pnl_1d)}$</b></font>'],
+                ["PNL 7 jours", f'<font color="{_pnl_color(trader.pnl_1w)}"><b>{_pnl_str(trader.pnl_1w)}$</b></font>'],
+                ["PNL 30 jours", f'<font color="{_pnl_color(trader.pnl_1m)}"><b>{_pnl_str(trader.pnl_1m)}$</b></font>'],
+                ["Volume total", f"{trader.volume:,.0f}$"],
+                ["Marches trades", str(trader.markets_traded)],
+            ]
+            profile_table = Table(
+                [[Paragraph(r[0], s["body"]), Paragraph(r[1], s["body"])] for r in profile_rows],
+                colWidths=[100, 160],
+            )
+            profile_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f8fafc")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(profile_table)
+            elements.append(Spacer(1, 6))
+        else:
+            # Fallback: show open positions PNL only
+            c_t = _pnl_color(trader.total_unrealized)
+            t_pct = (trader.total_unrealized / trader.total_invested * 100) if trader.total_invested > 0 else 0
+            elements.append(Paragraph(
+                f'Positions ouvertes : {len(trader.open_positions)} | '
+                f'Investi : {trader.total_invested:.0f}$ | '
+                f'PNL ouvert : <font color="{c_t}"><b>{_pnl_str(trader.total_unrealized)}$ '
+                f'({_pnl_str(t_pct)}%)</b></font>',
+                s["body"],
+            ))
+            elements.append(Spacer(1, 6))
+
+        # Activity per timeframe
+        elements.append(Paragraph("Activite de trading", s["subsection"]))
+        elements.append(_activity_table(
             [trader.stats_1h, trader.stats_24h, trader.stats_7d], s
         ))
 
         # Open positions
         if trader.open_positions:
             elements.append(Paragraph(
-                f"Positions ouvertes ({len(trader.open_positions)}) "
-                f"-- PNL non-realise", s["subsection"]
+                f"Positions ouvertes ({len(trader.open_positions)})",
+                s["subsection"]
             ))
-            elements.append(_positions_table(trader.open_positions, s, max_rows=10))
-
-        # Resolved positions
-        if trader.resolved_positions:
+            elements.append(_positions_table(trader.open_positions, s, max_rows=15))
+        else:
             elements.append(Paragraph(
-                f"Positions resolues ({len(trader.resolved_positions)}) "
-                f"-- PNL realise", s["subsection"]
+                "<i>Aucune position ouverte.</i>", s["body"]
             ))
-            elements.append(_positions_table(trader.resolved_positions, s, max_rows=10))
 
     # ── Footer ──
     _footer(elements, data.generated_at, s)
@@ -441,8 +511,12 @@ async def build_trader_report_data(username: str, followed_wallets: list[str]) -
     """Build TraderReportData by fetching real data from Polymarket API.
 
     For each trader:
-    - Positions API -> open + resolved positions with PNL
+    - Positions API -> open positions with PNL (accurate)
     - Activity API -> trades per timeframe (1h, 24h, 7j)
+
+    Note: Resolved positions are NOT included because the API only returns
+    a small subset (~130 recent) out of potentially thousands of markets.
+    This would give misleading PNL totals.
     """
     from bot.services.polymarket import polymarket_client
 
@@ -458,17 +532,14 @@ async def build_trader_report_data(username: str, followed_wallets: list[str]) -
         w_short = f"{wallet[:6]}...{wallet[-4:]}"
         trader = TraderSection(wallet=wallet, wallet_short=w_short)
 
-        # Fetch positions + activity in parallel
+        # Fetch positions
         positions = await polymarket_client.get_positions_by_address(wallet)
 
-        # Separate open vs resolved
+        # Only keep OPEN positions (not redeemable) — they have accurate PNL
         open_pos = [p for p in positions if not p.redeemable]
-        settled_pos = [p for p in positions if p.redeemable]
 
         # Build position snapshots
         for p in open_pos:
-            pnl = p.cash_pnl
-            pnl_pct = p.pnl_pct
             trader.open_positions.append(PositionSnapshot(
                 title=p.title,
                 outcome=p.outcome,
@@ -477,70 +548,59 @@ async def build_trader_report_data(username: str, followed_wallets: list[str]) -
                 current_price=p.current_price,
                 invested=p.initial_value,
                 current_value=p.current_value,
-                pnl_usdc=pnl,
-                pnl_pct=pnl_pct,
+                pnl_usdc=p.cash_pnl,
+                pnl_pct=p.pnl_pct,
                 shares=p.size,
                 redeemable=False,
             ))
 
-        for p in settled_pos:
-            pnl = p.realized_pnl if p.realized_pnl != 0 else p.cash_pnl
-            pnl_pct = p.percent_realized_pnl if p.percent_realized_pnl != 0 else p.pnl_pct
-            trader.resolved_positions.append(PositionSnapshot(
-                title=p.title,
-                outcome=p.outcome,
-                side="BUY",
-                entry_price=p.avg_price,
-                current_price=p.current_price,
-                invested=p.initial_value,
-                current_value=p.current_value,
-                pnl_usdc=pnl,
-                pnl_pct=pnl_pct,
-                shares=p.size,
-                redeemable=True,
-            ))
-
         # Sort by absolute PNL
         trader.open_positions.sort(key=lambda p: abs(p.pnl_usdc), reverse=True)
-        trader.resolved_positions.sort(key=lambda p: abs(p.pnl_usdc), reverse=True)
 
-        # Totals for this trader
+        # Totals for this trader (open positions only)
         trader.total_unrealized = sum(p.cash_pnl for p in open_pos)
-        trader.total_realized = sum(p.realized_pnl for p in settled_pos)
         trader.total_invested = sum(p.initial_value for p in open_pos)
         trader.total_current = sum(p.current_value for p in open_pos)
 
-        # Activity per timeframe
-        # Fetch activity for the last 7 days
-        activity_7d = await polymarket_client.get_activity_by_address(
-            wallet, limit=500, start=now_ts - (7 * 86400)
-        )
-
+        # Activity per timeframe — separate API call per period
         for tf_stats, secs in [
             (trader.stats_1h, 3600),
             (trader.stats_24h, 86400),
             (trader.stats_7d, 7 * 86400),
         ]:
-            cutoff = now_ts - secs
-            tf_acts = [a for a in activity_7d if a.timestamp >= cutoff]
-            tf_stats.trades_count = len(tf_acts)
-            tf_stats.buys = sum(1 for a in tf_acts if a.side == "BUY")
-            tf_stats.sells = sum(1 for a in tf_acts if a.side == "SELL")
-            tf_stats.volume_usdc = sum(a.usdc_size for a in tf_acts)
+            start_ts = now_ts - secs
+            tf_activity = await polymarket_client.get_activity_by_address(
+                wallet, limit=500, start=start_ts
+            )
+            tf_stats.trades_count = len(tf_activity)
+            tf_stats.buys = sum(1 for a in tf_activity if a.side == "BUY")
+            tf_stats.sells = sum(1 for a in tf_activity if a.side == "SELL")
+            tf_stats.volume_usdc = sum(a.usdc_size for a in tf_activity)
 
-            # Unrealized PNL = from open positions (same for all timeframes)
-            tf_stats.unrealized_pnl = trader.total_unrealized
-            tf_stats.invested = trader.total_invested
-            tf_stats.current_value = trader.total_current
+            # If 500 results returned, note it's capped
+            if len(tf_activity) >= 500:
+                tf_stats.trades_count = 500  # will show "500+"
 
-            # Realized PNL = from resolved positions visible in API
-            tf_stats.realized_pnl = trader.total_realized
+        # Fetch profile data (PnL total, 1D, 1W, volume) via page scraping
+        try:
+            profile = await polymarket_client.get_trader_profile(wallet)
+            if profile:
+                trader.has_profile = True
+                trader.username = profile.username
+                trader.pseudonym = profile.pseudonym
+                trader.pnl_total = profile.pnl_total
+                trader.pnl_1d = profile.pnl_1d
+                trader.pnl_1w = profile.pnl_1w
+                trader.pnl_1m = profile.pnl_1m
+                trader.volume = profile.volume
+                trader.markets_traded = profile.markets_traded
+        except Exception as e:
+            logger.warning(f"Failed to get profile for {w_short}: {e}")
 
         report.traders.append(trader)
 
         # Accumulate global
         report.grand_unrealized += trader.total_unrealized
-        report.grand_realized += trader.total_realized
         report.grand_invested += trader.total_invested
         report.grand_current += trader.total_current
         report.total_open_positions += len(trader.open_positions)
@@ -614,7 +674,7 @@ def generate_recap_report_pdf(data: RecapReportData) -> io.BytesIO:
 
     # ── Performance by Timeframe ──
     elements.append(Paragraph("PERFORMANCE PAR PERIODE", s["section"]))
-    elements.append(_timeframe_table(
+    elements.append(_recap_timeframe_table(
         [data.stats_1h, data.stats_24h, data.stats_7d, data.stats_all], s
     ))
 

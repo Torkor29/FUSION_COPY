@@ -967,7 +967,6 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     total_positions = 0
     grand_unrealized = 0.0
-    grand_realized = 0.0
     grand_invested = 0.0
     now_ts = int(time.time())
 
@@ -984,11 +983,31 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         open_pos = [p for p in positions if not p.redeemable]
         settled_pos = [p for p in positions if p.redeemable]
 
-        lines.append(f"👤 **Trader** `{w_short}`")
+        # Try to get profile stats (PNL total, 1W, 1D)
+        profile = None
+        try:
+            profile = await polymarket_client.get_trader_profile(wallet)
+        except Exception:
+            pass
+
+        if profile and profile.pseudonym:
+            lines.append(f"👤 **{profile.pseudonym}** `{w_short}`")
+        else:
+            lines.append(f"👤 **Trader** `{w_short}`")
 
         if not positions and not activity:
             lines.append("   _Aucune activité_\n")
             continue
+
+        # Show profile PNL if available
+        if profile and profile.pnl_total != 0:
+            e_total = "📈" if profile.pnl_total >= 0 else "📉"
+            e_1w = "📈" if profile.pnl_1w >= 0 else "📉"
+            lines.append(
+                f"   💰 **PNL total : {profile.pnl_total:+,.0f}$** | "
+                f"{e_1w} 7j : {profile.pnl_1w:+,.0f}$ | "
+                f"24h : {profile.pnl_1d:+,.0f}$"
+            )
 
         # ── Activity par timeframe ──
         tf_parts = []
@@ -1005,10 +1024,7 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         trader_unrealized = sum(p.cash_pnl for p in open_pos)
         trader_invested = sum(p.initial_value for p in open_pos)
         trader_current = sum(p.current_value for p in open_pos)
-        # P&L réalisé = uniquement positions résolues visibles dans l'API
-        trader_realized = sum(p.realized_pnl for p in settled_pos)
         grand_unrealized += trader_unrealized
-        grand_realized += trader_realized
         grand_invested += trader_invested
         total_positions += len(open_pos)
 
@@ -1016,12 +1032,11 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             pnl_pct = (trader_unrealized / trader_invested * 100) if trader_invested > 0 else 0
             e = "📈" if trader_unrealized >= 0 else "📉"
             lines.append(
-                f"   {e} **Ouvert : {trader_unrealized:+.2f}$ ({pnl_pct:+.1f}%)** "
+                f"   {e} **PNL ouvert : {trader_unrealized:+.2f}$ ({pnl_pct:+.1f}%)** "
                 f"sur {len(open_pos)} pos"
             )
-        if settled_pos:
-            e2 = "📈" if trader_realized >= 0 else "📉"
-            lines.append(f"   {e2} **Résolus : {trader_realized:+.2f}$** ({len(settled_pos)} marchés)")
+        else:
+            lines.append("   _Pas de position ouverte_")
 
         # ── Top positions ouvertes ──
         if open_pos:
@@ -1053,12 +1068,10 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ── Totaux ──
     lines.append("━━━━━━━━━━━━━━━━━━━━")
-    total_pnl = grand_unrealized + grand_realized
     pnl_pct = (grand_unrealized / grand_invested * 100) if grand_invested > 0 else 0
-    e = "📈" if total_pnl >= 0 else "📉"
+    e = "📈" if grand_unrealized >= 0 else "📉"
     lines.append(
-        f"{e} **P&L ouvert : {grand_unrealized:+.2f}$ ({pnl_pct:+.1f}%)**\n"
-        f"📈 **P&L réalisé : {grand_realized:+.2f}$**\n"
+        f"{e} **P&L positions ouvertes : {grand_unrealized:+.2f}$ ({pnl_pct:+.1f}%)**\n"
         f"💰 Investi : {grand_invested:.0f}$ • "
         f"{total_positions} pos ouvertes sur {len(followed)} trader(s)"
     )
@@ -1327,21 +1340,35 @@ async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             if isinstance(res, tuple):
                 current_prices[res[0]] = res[1]
 
-    # ── Calculate unrealized PNL ──
+    # ── Separate active vs expired positions ──
+    active_trades = []
+    expired_trades = []
+    for t in open_trades:
+        cur_price = current_prices.get(t.token_id, 0)
+        if cur_price > 0:
+            active_trades.append(t)
+        else:
+            expired_trades.append(t)
+
+    # ── Calculate unrealized PNL (active positions only) ──
     total_invested = 0.0
     total_current_value = 0.0
-    for t in open_trades:
+    for t in active_trades:
         invested = t.net_amount_usdc
         shares = t.shares or (invested / t.price if t.price > 0 else 0)
         cur_price = current_prices.get(t.token_id, 0)
-        current_value = shares * cur_price if cur_price > 0 else invested
+        current_value = shares * cur_price
         total_invested += invested
         total_current_value += current_value
+
+    # Expired positions: invested but value unknown (awaiting settlement)
+    expired_invested = sum(t.net_amount_usdc for t in expired_trades)
 
     unrealized_pnl = total_current_value - total_invested
     unrealized_pct = (unrealized_pnl / total_invested * 100) if total_invested > 0 else 0
 
-    # ── Portfolio total = cash + positions value ──
+    # ── Portfolio total = cash + active positions value ──
+    # Expired positions NOT counted (result unknown until settlement)
     portfolio_value = paper_balance + total_current_value
     total_pnl = portfolio_value - paper_initial
     pnl_pct = (total_pnl / paper_initial * 100) if paper_initial > 0 else 0
@@ -1352,24 +1379,37 @@ async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "📝 **PAPER WALLET**\n━━━━━━━━━━━━━━━━━━━━\n",
         f"🏁 Capital initial : **{paper_initial:.2f} USDC**\n",
         f"💵 Cash disponible : **{paper_balance:.2f} USDC**",
-        f"📊 Positions ouvertes : **{total_current_value:.2f} USDC**"
-        f" ({len(open_trades)} pos.)",
+        f"📊 Positions actives : **{total_current_value:.2f} USDC**"
+        f" ({len(active_trades)} pos.)",
+    ]
+    if expired_trades:
+        lines.append(
+            f"⏳ En attente de résolution : **{expired_invested:.2f} USDC**"
+            f" ({len(expired_trades)} pos.)"
+        )
+    lines += [
         f"━━━━━━━━━━━━━━━━━━━━",
         f"💼 **Portefeuille total : {portfolio_value:.2f} USDC**",
         f"{pnl_emoji} **PNL total : {pnl_sign}{total_pnl:.2f} USDC "
-        f"({pnl_sign}{pnl_pct:.1f}%)**\n",
+        f"({pnl_sign}{pnl_pct:.1f}%)**",
     ]
+    if expired_trades:
+        lines.append(
+            f"_({len(expired_trades)} marches expires en attente — "
+            f"resultat final apres resolution)_"
+        )
+    lines.append("")
 
-    # ── Open positions with unrealized PNL ──
-    if open_trades:
+    # ── Active positions with unrealized PNL ──
+    if active_trades:
         ur_sign = "+" if unrealized_pnl >= 0 else ""
         ur_emoji = "📈" if unrealized_pnl >= 0 else "📉"
         lines.append(
-            f"📌 **Positions ouvertes** ({len(open_trades)}) — "
+            f"📌 **Positions actives** ({len(active_trades)}) — "
             f"{ur_emoji} {ur_sign}{unrealized_pnl:.2f} USDC "
             f"({ur_sign}{unrealized_pct:.1f}%)"
         )
-        for t in open_trades[:10]:
+        for t in active_trades[:10]:
             q = t.market_question or t.market_id
             if len(q) > 35:
                 q = q[:32] + "..."
@@ -1377,25 +1417,42 @@ async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             invested = t.net_amount_usdc
             entry_price = t.price
             cur_price = current_prices.get(t.token_id, 0)
-            current_val = shares * cur_price if cur_price > 0 else 0
+            current_val = shares * cur_price
             pos_pnl = current_val - invested
             pos_pct = (pos_pnl / invested * 100) if invested > 0 else 0
 
             time_str = t.created_at.strftime("%d/%m %H:%M") if t.created_at else "?"
 
-            if cur_price > 0:
-                p_sign = "+" if pos_pnl >= 0 else ""
-                p_emoji = "📈" if pos_pnl >= 0 else "📉"
-                pnl_str = f"{p_emoji} {p_sign}{pos_pnl:.2f} ({p_sign}{pos_pct:.0f}%)"
-            else:
-                pnl_str = "⏳ prix indispo."
+            p_sign = "+" if pos_pnl >= 0 else ""
+            p_emoji = "📈" if pos_pnl >= 0 else "📉"
+            pnl_str = f"{p_emoji} {p_sign}{pos_pnl:.2f} ({p_sign}{pos_pct:.0f}%)"
 
             lines.append(
                 f"\n   🟢 **{q}**\n"
                 f"   {time_str} | {invested:.2f}→{current_val:.2f} USDC | {pnl_str}\n"
                 f"   Entry: {entry_price:.2f} → Now: {cur_price:.2f} | {shares:.1f} shares"
             )
-    else:
+
+    # ── Expired / awaiting resolution ──
+    if expired_trades:
+        lines.append(
+            f"\n⏳ **Marches expires** ({len(expired_trades)}) — "
+            f"en attente de resolution"
+        )
+        for t in expired_trades[:10]:
+            q = t.market_question or t.market_id
+            if len(q) > 35:
+                q = q[:32] + "..."
+            invested = t.net_amount_usdc
+            time_str = t.created_at.strftime("%d/%m %H:%M") if t.created_at else "?"
+            lines.append(
+                f"\n   ⏳ **{q}**\n"
+                f"   {time_str} | Mise : {invested:.2f} USDC | Entry: {t.price:.2f}"
+            )
+        if len(expired_trades) > 10:
+            lines.append(f"   _… +{len(expired_trades) - 10} autres_")
+
+    if not active_trades and not expired_trades:
         lines.append("\n📌 _Aucune position ouverte._")
 
     # ── Settled positions summary ──

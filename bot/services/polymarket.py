@@ -70,6 +70,22 @@ class OrderResult:
     error: Optional[str] = None
 
 
+@dataclass
+class TraderProfile:
+    """Public profile stats for a Polymarket trader."""
+    wallet: str
+    username: str = ""
+    pseudonym: str = ""
+    pnl_total: float = 0.0
+    pnl_1d: float = 0.0
+    pnl_1w: float = 0.0
+    pnl_1m: float = 0.0
+    volume: float = 0.0
+    markets_traded: int = 0
+    positions_value: float = 0.0
+    biggest_win: float = 0.0
+
+
 class PolymarketClient:
     """Wrapper for Polymarket public and trading APIs."""
 
@@ -265,6 +281,8 @@ class PolymarketClient:
                 "type": "TRADE",
             }
             if start:
+                # API may expect seconds or milliseconds — send seconds
+                # (if it expects ms, multiply; tests show seconds work)
                 params["start"] = start
             if side:
                 params["side"] = side.upper()
@@ -276,8 +294,11 @@ class PolymarketClient:
 
             activities: list[Activity] = []
             for a in data:
+                raw_ts = int(a.get("timestamp", 0))
+                # Normalize: if timestamp > 10^12, it's milliseconds → convert to seconds
+                ts = raw_ts // 1000 if raw_ts > 1e12 else raw_ts
                 activities.append(Activity(
-                    timestamp=int(a.get("timestamp", 0)),
+                    timestamp=ts,
                     market_id=a.get("conditionId", ""),
                     title=a.get("title", ""),
                     outcome=a.get("outcome", ""),
@@ -295,6 +316,130 @@ class PolymarketClient:
                 f"Failed to fetch activity for {wallet_address[:10]}...: {e}"
             )
             return []
+
+    async def get_trader_profile(self, wallet_address: str) -> Optional[TraderProfile]:
+        """Fetch a trader's public profile stats by scraping their Polymarket page.
+
+        Steps:
+        1. Call /api/profile/userData?address=WALLET to get username
+        2. Fetch profile page /@username and extract __NEXT_DATA__ JSON
+        3. Parse PnL timeseries (1D, 1W, 1M, ALL) and profile stats
+
+        Returns None if the profile can't be fetched.
+        """
+        import json
+        import re
+
+        http = await self._get_http()
+        profile = TraderProfile(wallet=wallet_address)
+
+        # Step 1: Wallet → username
+        try:
+            resp = await http.get(
+                "https://polymarket.com/api/profile/userData",
+                params={"address": wallet_address},
+            )
+            resp.raise_for_status()
+            user_data = resp.json()
+            profile.username = user_data.get("name", "")
+            profile.pseudonym = user_data.get("pseudonym", "")
+        except Exception as e:
+            logger.warning(f"Failed to get userData for {wallet_address[:10]}...: {e}")
+            return None
+
+        if not profile.username:
+            logger.warning(f"No username found for {wallet_address[:10]}...")
+            return None
+
+        # Step 2: Fetch profile page HTML
+        try:
+            resp = await http.get(
+                f"https://polymarket.com/@{profile.username}",
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            html = resp.text
+        except Exception as e:
+            logger.warning(f"Failed to fetch profile page @{profile.username}: {e}")
+            return None
+
+        # Step 3: Extract __NEXT_DATA__ JSON
+        try:
+            match = re.search(
+                r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                html,
+                re.DOTALL,
+            )
+            if not match:
+                logger.warning(f"No __NEXT_DATA__ found on @{profile.username}")
+                return None
+
+            next_data = json.loads(match.group(1))
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Failed to parse __NEXT_DATA__ for @{profile.username}: {e}")
+            return None
+
+        # Step 4: Parse stats from dehydrated state
+        try:
+            # Navigate the dehydrated React Query state
+            dehydrated = next_data.get("props", {}).get("pageProps", {}).get(
+                "dehydratedState", {}
+            )
+            queries = dehydrated.get("queries", [])
+
+            for q in queries:
+                qkey = q.get("queryKey", [])
+                data = q.get("state", {}).get("data", None)
+                if not data:
+                    continue
+
+                key_str = str(qkey)
+
+                # Portfolio PnL timeseries
+                if "portfolio-pnl" in key_str and isinstance(data, list) and len(data) > 1:
+                    first_p = data[0].get("p", 0) if isinstance(data[0], dict) else 0
+                    last_p = data[-1].get("p", 0) if isinstance(data[-1], dict) else 0
+                    pnl = last_p - first_p
+
+                    if "1D" in key_str:
+                        profile.pnl_1d = pnl
+                    elif "1W" in key_str:
+                        profile.pnl_1w = pnl
+                    elif "1M" in key_str:
+                        profile.pnl_1m = pnl
+                    elif "ALL" in key_str:
+                        profile.pnl_total = last_p  # ALL = total PnL from start
+
+                # Profile stats (volume, markets traded, etc.)
+                if isinstance(data, dict):
+                    if "volume" in data:
+                        profile.volume = float(data.get("volume", 0))
+                    if "marketsTraded" in data:
+                        profile.markets_traded = int(data.get("marketsTraded", 0))
+                    if "positionsValue" in data:
+                        profile.positions_value = float(data.get("positionsValue", 0))
+                    if "profit" in data:
+                        profile.pnl_total = float(data.get("profit", 0))
+                    if "biggestWin" in data:
+                        profile.biggest_win = float(data.get("biggestWin", 0))
+
+            # Fallback: extract from page props directly
+            page_props = next_data.get("props", {}).get("pageProps", {})
+            if page_props.get("profit") and profile.pnl_total == 0:
+                profile.pnl_total = float(page_props.get("profit", 0))
+            if page_props.get("volume") and profile.volume == 0:
+                profile.volume = float(page_props.get("volume", 0))
+
+        except Exception as e:
+            logger.warning(f"Failed to parse profile stats for @{profile.username}: {e}")
+
+        logger.info(
+            f"Profile @{profile.username}: PnL total={profile.pnl_total:+.0f}, "
+            f"1W={profile.pnl_1w:+.0f}, 1D={profile.pnl_1d:+.0f}, "
+            f"volume={profile.volume:.0f}"
+        )
+        return profile
 
     async def get_markets(
         self, limit: int = 50, category: Optional[str] = None
