@@ -1075,7 +1075,7 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_dashboard"),
             InlineKeyboardButton("📋 Récap", callback_data="menu_recap"),
         ],
-        [InlineKeyboardButton("📄 Rapport PDF (mes trades)", callback_data="paper_report")],
+        [InlineKeyboardButton("📄 Rapport PDF (traders)", callback_data="dashboard_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
@@ -1446,14 +1446,14 @@ async def menu_paper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate and send a PDF performance report."""
+    """Generate and send a PDF report of OUR copied trades (Recap)."""
     query = update.callback_query
-    await query.answer("⏳ Génération du rapport PDF…")
+    await query.answer("⏳ Génération du rapport PDF (mes trades)…")
 
     try:
         from bot.models.trade import Trade, TradeStatus
         from bot.services.polymarket import polymarket_client
-        from bot.services.report import build_report_data, generate_report_pdf
+        from bot.services.report import build_recap_report_data, generate_recap_report_pdf
         import asyncio
 
         async with async_session() as session:
@@ -1463,7 +1463,6 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             us = await get_or_create_settings(session, user)
 
-            # Fetch FILLED trades matching current mode (paper or live)
             is_paper = user.paper_trading
             result = await session.execute(
                 select(Trade).where(
@@ -1498,13 +1497,13 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     current_prices[res[0]] = res[1]
 
         # Build report data and generate PDF
-        report_data = await build_report_data(user, us, trades, current_prices)
-        pdf_buffer = generate_report_pdf(report_data)
+        report_data = await build_recap_report_data(user, us, trades, current_prices)
+        pdf_buffer = generate_recap_report_pdf(report_data)
 
         # Send PDF
         from datetime import datetime, timezone
         filename = (
-            f"wenpolymarket_report_"
+            f"wenpolymarket_recap_"
             f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
         )
 
@@ -1512,7 +1511,7 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             document=pdf_buffer,
             filename=filename,
             caption=(
-                f"📄 **Rapport de performance WENPOLYMARKET**\n"
+                f"📄 **Rapport Recap — Mes trades copies**\n"
                 f"{'📝 Paper Trading' if user.paper_trading else '💵 Live Trading'}\n"
                 f"💼 Portefeuille : {report_data.portfolio_value:.2f} USDC\n"
                 f"{'📈' if report_data.total_pnl >= 0 else '📉'} "
@@ -1527,11 +1526,81 @@ async def paper_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.error(f"paper_report error: {e}", exc_info=True)
         try:
             await query.edit_message_text(
-                f"❌ **Erreur génération PDF**\n\n`{str(e)[:300]}`\n\n"
-                "Réessayez dans quelques secondes.",
+                f"❌ **Erreur generation PDF**\n\n`{str(e)[:300]}`\n\n"
+                "Reessayez dans quelques secondes.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Réessayer", callback_data="paper_report")],
+                    [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
+                ]),
+            )
+        except Exception:
+            pass
+
+
+async def dashboard_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate and send a PDF report of followed traders' performance."""
+    query = update.callback_query
+    await query.answer("⏳ Génération du rapport traders…")
+
+    try:
+        from bot.services.report import build_trader_report_data, generate_trader_report_pdf
+
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            if not user:
+                return
+            us = await get_or_create_settings(session, user)
+            followed = us.followed_wallets or []
+
+        if not followed:
+            await query.edit_message_text(
+                "❌ **Aucun trader suivi.**\n\n"
+                "Ajoutez des traders dans les parametres.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚙️ Parametres", callback_data="menu_settings")],
+                    [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
+                ]),
+            )
+            return
+
+        username = user.telegram_username or f"User {user.telegram_id}"
+
+        # Build report data from Polymarket API
+        report_data = await build_trader_report_data(username, followed)
+        pdf_buffer = generate_trader_report_pdf(report_data)
+
+        # Send PDF
+        from datetime import datetime, timezone
+        filename = (
+            f"wenpolymarket_traders_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+        )
+
+        total_pnl = report_data.grand_unrealized + report_data.grand_realized
+        await query.message.reply_document(
+            document=pdf_buffer,
+            filename=filename,
+            caption=(
+                f"📄 **Rapport Dashboard — Traders suivis**\n"
+                f"👥 {len(report_data.traders)} trader(s) | "
+                f"{report_data.total_open_positions} positions ouvertes\n"
+                f"{'📈' if total_pnl >= 0 else '📉'} "
+                f"PNL total : {'+' if total_pnl >= 0 else ''}"
+                f"{total_pnl:.2f} USDC"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"dashboard_report error: {e}", exc_info=True)
+        try:
+            await query.edit_message_text(
+                f"❌ **Erreur generation PDF traders**\n\n`{str(e)[:300]}`\n\n"
+                "Reessayez dans quelques secondes.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Réessayer", callback_data="dashboard_report")],
                     [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
                 ]),
             )
@@ -2101,6 +2170,7 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(delete_wallet_exec, pattern=r"^delwallet_exec_\d+$"),
         CallbackQueryHandler(menu_paper, pattern="^menu_paper$"),
         CallbackQueryHandler(paper_report, pattern="^paper_report$"),
+        CallbackQueryHandler(dashboard_report, pattern="^dashboard_report$"),
         CallbackQueryHandler(trader_report_select, pattern="^trader_report$"),
         CallbackQueryHandler(trader_report_generate, pattern=r"^trader_rpt_0x[a-fA-F0-9]+$"),
         CallbackQueryHandler(paper_set_balance, pattern="^paper_set_balance$"),
