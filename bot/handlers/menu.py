@@ -531,25 +531,52 @@ async def menu_traders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         us = await get_or_create_settings(session, user)
         wallets = us.followed_wallets or []
+        trader_filters = us.trader_filters or {}
 
-    if wallets:
-        lines = [f"  {i}. `{w[:6]}...{w[-4:]}`" for i, w in enumerate(wallets, 1)]
-        wallet_text = "\n".join(lines)
-    else:
-        wallet_text = "  _Aucun trader suivi_"
+    if not wallets:
+        text = (
+            "👥 **TRADERS SUIVIS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Aucun trader suivi_\n\n"
+            "Ajoutez un wallet dans ⚙️ **Paramètres**."
+        )
+        keyboard = [
+            [InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings")],
+            [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
+        ]
+        await query.edit_message_text(
+            text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
 
+    # Build list with clickable wallets
+    lines = []
+    keyboard = []
+    for i, w in enumerate(wallets, 1):
+        short = f"{w[:6]}...{w[-4:]}"
+        excl = trader_filters.get(w.lower(), {}).get("excluded_categories", [])
+        excl_badge = f" • 🚫 {len(excl)} filtre(s)" if excl else ""
+        lines.append(f"  {i}. `{short}`{excl_badge}")
+        keyboard.append([
+            InlineKeyboardButton(f"📊 {short}", callback_data=f"trader_rpt_{w}"),
+            InlineKeyboardButton("🎯 Filtres", callback_data=f"trader_cats_{w}"),
+        ])
+
+    wallet_text = "\n".join(lines)
     text = (
         "👥 **TRADERS SUIVIS**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{wallet_text}\n\n"
-        "Pour ajouter ou retirer des traders, utilisez le bouton "
-        "**⚙️ Paramètres** ci-dessous."
+        "📊 = Rapport détaillé du trader\n"
+        "🎯 = Analyse par catégorie + filtres\n\n"
+        "_Cliquez sur un trader pour l'analyser_"
     )
 
-    keyboard = [
-        [InlineKeyboardButton("⚙️ Ouvrir paramètres", callback_data="menu_settings")],
-        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
-    ]
+    keyboard.append([
+        InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
+        InlineKeyboardButton("📡 Dashboard", callback_data="menu_dashboard"),
+    ])
+    keyboard.append([InlineKeyboardButton("🏠 Menu", callback_data="menu_back")])
 
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
