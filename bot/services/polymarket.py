@@ -36,6 +36,15 @@ class Position:
     current_price: float
     pnl_pct: float
     title: str = ""
+    # Enriched fields from Data API
+    cash_pnl: float = 0.0          # Unrealized PNL in USDC
+    realized_pnl: float = 0.0     # Realized PNL in USDC
+    percent_realized_pnl: float = 0.0
+    initial_value: float = 0.0    # Total cost basis
+    current_value: float = 0.0    # Current value
+    redeemable: bool = False      # True if market resolved
+    end_date: str = ""            # Market end date
+    slug: str = ""                # Market URL slug
 
 
 @dataclass
@@ -206,10 +215,13 @@ class PolymarketClient:
                 continue
 
             avg_price = float(p.get("avgPrice", 0))
-            current_price = float(p.get("currentPrice", avg_price))
-            pnl_pct = 0.0
-            if avg_price > 0:
-                pnl_pct = ((current_price - avg_price) / avg_price) * 100
+            cur_price = float(p.get("curPrice", p.get("currentPrice", avg_price)))
+            initial_value = float(p.get("initialValue", size * avg_price))
+            current_value = float(p.get("currentValue", size * cur_price))
+            cash_pnl = float(p.get("cashPnl", current_value - initial_value))
+            pnl_pct = float(p.get("percentPnl", 0))
+            if pnl_pct == 0 and avg_price > 0:
+                pnl_pct = ((cur_price - avg_price) / avg_price) * 100
 
             positions.append(Position(
                 market_id=p.get("conditionId", p.get("marketId", "")),
@@ -217,9 +229,17 @@ class PolymarketClient:
                 outcome=p.get("outcome", ""),
                 size=size,
                 avg_price=avg_price,
-                current_price=current_price,
+                current_price=cur_price,
                 pnl_pct=pnl_pct,
                 title=p.get("title", p.get("question", "")),
+                cash_pnl=cash_pnl,
+                realized_pnl=float(p.get("realizedPnl", 0)),
+                percent_realized_pnl=float(p.get("percentRealizedPnl", 0)),
+                initial_value=initial_value,
+                current_value=current_value,
+                redeemable=bool(p.get("redeemable", False)),
+                end_date=str(p.get("endDate", "")),
+                slug=str(p.get("slug", "")),
             ))
         return positions
 

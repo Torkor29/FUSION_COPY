@@ -25,7 +25,7 @@ from bot.services.scheduler import (
     reset_daily_limits,
     cleanup_expired_otps,
     health_check,
-    settle_paper_trades,
+    settle_trades,
 )
 
 logging.basicConfig(
@@ -60,7 +60,7 @@ def build_application() -> Application:
     return app
 
 
-def setup_scheduler(monitor: MultiMasterMonitor) -> AsyncIOScheduler:
+def setup_scheduler(monitor: MultiMasterMonitor, bot=None) -> AsyncIOScheduler:
     """Configure periodic background tasks."""
     scheduler = AsyncIOScheduler()
 
@@ -82,11 +82,11 @@ def setup_scheduler(monitor: MultiMasterMonitor) -> AsyncIOScheduler:
         id="health_check",
     )
 
-    # Settle resolved paper trades every 2 minutes (short-term markets expire fast)
+    # Settle resolved trades (paper + live) every 2 minutes
     scheduler.add_job(
-        settle_paper_trades,
+        lambda: settle_trades(bot=bot),
         "interval", minutes=2,
-        id="settle_paper_trades",
+        id="settle_trades",
     )
 
     # Refresh watched wallets every 60s so new follows are picked up quickly
@@ -145,7 +145,7 @@ async def main() -> None:
         except Exception as e:
             logger.warning(f"WS subscription sync failed: {e}")
 
-    scheduler = setup_scheduler(monitor)
+    scheduler = setup_scheduler(monitor, bot=app.bot)
 
     # Sync WS subscriptions every 2 minutes
     scheduler.add_job(

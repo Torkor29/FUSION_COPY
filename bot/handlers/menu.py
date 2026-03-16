@@ -276,15 +276,19 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         from bot.models.trade import Trade, TradeStatus, TradeSide
-        # Only BUY trades that are FILLED = open positions
+        # BUY trades that are FILLED — split open vs settled
         result = await session.execute(
             select(Trade).where(
                 Trade.user_id == user.id,
                 Trade.status == TradeStatus.FILLED,
                 Trade.side == TradeSide.BUY,
-            ).order_by(Trade.created_at.desc()).limit(20)
+            ).order_by(Trade.created_at.desc()).limit(30)
         )
-        trades = list(result.scalars().all())
+        all_trades = list(result.scalars().all())
+        # Show open (unsettled) first, then recently settled
+        open_trades = [t for t in all_trades if not t.is_settled]
+        settled_recent = [t for t in all_trades if t.is_settled][:5]
+        trades = open_trades + settled_recent
 
     if not trades:
         text = (
@@ -352,24 +356,36 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # PNL calculation
         entry_price = t.price
-        cur_price = current_prices.get(t.token_id, 0)
         invested = t.net_amount_usdc
         shares = t.shares if t.shares else (invested / entry_price if entry_price > 0 else 0)
-        current_value = shares * cur_price if cur_price > 0 else 0
-        pnl_usdc = current_value - invested
-        pnl_pct = (pnl_usdc / invested * 100) if invested > 0 else 0
 
-        total_invested += invested
-        total_current += current_value if cur_price > 0 else invested
-
-        # PNL display
-        if cur_price > 0:
-            pnl_sign = "+" if pnl_usdc >= 0 else ""
-            pnl_emoji = "📈" if pnl_usdc >= 0 else "📉"
-            pnl_str = f"{pnl_emoji} {pnl_sign}{pnl_usdc:.2f} USDC ({pnl_sign}{pnl_pct:.1f}%)"
+        if t.is_settled and t.settlement_pnl is not None:
+            # Settled — show final result
+            pnl_usdc = t.settlement_pnl
+            won = pnl_usdc >= 0
+            payout = invested + pnl_usdc
+            total_invested += invested
+            total_current += payout
+            result_str = "GAGNÉ ✅" if won else "PERDU ❌"
+            outcome = t.market_outcome or "?"
+            pnl_str = (
+                f"🏆 {result_str} ({outcome}) • "
+                f"P&L: {pnl_usdc:+.2f} USDC"
+            )
         else:
-            # Market expired/no liquidity — show entry price as reference
-            pnl_str = f"⏳ Marché expiré (entry: {entry_price:.2f})"
+            # Open position — fetch live price
+            cur_price = current_prices.get(t.token_id, 0)
+            current_value = shares * cur_price if cur_price > 0 else 0
+            pnl_usdc = current_value - invested
+            pnl_pct = (pnl_usdc / invested * 100) if invested > 0 else 0
+            total_invested += invested
+            total_current += current_value if cur_price > 0 else invested
+
+            if cur_price > 0:
+                pnl_emoji = "📈" if pnl_usdc >= 0 else "📉"
+                pnl_str = f"{pnl_emoji} {pnl_usdc:+.2f} USDC ({pnl_pct:+.1f}%) • now: {cur_price:.2f}"
+            else:
+                pnl_str = f"⏳ En attente de résolution"
 
         lines.append(
             f"{'🟢' if t.side.value == 'buy' else '🔴'} **{q}**{paper}\n"
@@ -943,30 +959,30 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    from datetime import timedelta
-
     lines = [
         "📡 **DASHBOARD — TRADERS SUIVIS**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "_Performances réelles des traders sur Polymarket._\n",
+        "_Performances réelles sur Polymarket._\n",
     ]
 
     total_positions = 0
-    grand_total_pnl = 0.0
-    grand_total_invested = 0.0
+    grand_unrealized = 0.0
+    grand_realized = 0.0
+    grand_invested = 0.0
     now_ts = int(time.time())
 
     for wallet in followed:
         w_short = f"{wallet[:6]}...{wallet[-4:]}"
-        positions = await polymarket_client.get_positions_by_address(wallet)
 
-        # Fetch activity for 24h
+        # Fetch positions + activity 24h in parallel concept (sequential for simplicity)
+        positions = await polymarket_client.get_positions_by_address(wallet)
         activity = await polymarket_client.get_activity_by_address(
             wallet, limit=500, start=now_ts - 86400
         )
 
-        n_pos = len(positions)
-        total_positions += n_pos
+        # Séparer positions ouvertes vs résolues
+        open_pos = [p for p in positions if not p.redeemable]
+        settled_pos = [p for p in positions if p.redeemable]
 
         lines.append(f"👤 **Trader** `{w_short}`")
 
@@ -974,12 +990,9 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append("   _Aucune activité_\n")
             continue
 
-        # ── Activity by timeframe ──
-        timeframes_tf = [
-            ("1h", 3600), ("3h", 10800), ("5h", 18000), ("24h", 86400),
-        ]
+        # ── Activity par timeframe ──
         tf_parts = []
-        for label, secs in timeframes_tf:
+        for label, secs in [("1h", 3600), ("3h", 10800), ("5h", 18000), ("24h", 86400)]:
             cutoff = now_ts - secs
             tf_acts = [a for a in activity if a.timestamp >= cutoff]
             if tf_acts:
@@ -988,62 +1001,64 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if tf_parts:
             lines.append(f"   📊 {' | '.join(tf_parts)}")
 
-        # ── Positions ouvertes ──
-        if positions:
-            positions.sort(key=lambda p: p.size * p.current_price, reverse=True)
+        # ── PNL depuis l'API (plus besoin de recalculer) ──
+        trader_unrealized = sum(p.cash_pnl for p in open_pos)
+        trader_realized = sum(p.realized_pnl for p in positions)
+        trader_invested = sum(p.initial_value for p in open_pos)
+        grand_unrealized += trader_unrealized
+        grand_realized += trader_realized
+        grand_invested += trader_invested
+        total_positions += len(open_pos)
 
-            trader_pnl = 0.0
-            trader_invested = 0.0
-            for p in positions:
-                invested_p = p.size * p.avg_price
-                current_p = p.size * p.current_price
-                trader_pnl += (current_p - invested_p)
-                trader_invested += invested_p
-            grand_total_pnl += trader_pnl
-            grand_total_invested += trader_invested
-
-            pnl_pct = (trader_pnl / trader_invested * 100) if trader_invested > 0 else 0
-            pnl_emoji = "📈" if trader_pnl >= 0 else "📉"
+        if open_pos:
+            pnl_pct = (trader_unrealized / trader_invested * 100) if trader_invested > 0 else 0
+            e = "📈" if trader_unrealized >= 0 else "📉"
             lines.append(
-                f"   {pnl_emoji} **P&L : {trader_pnl:+.2f} USDC ({pnl_pct:+.1f}%)**"
-                f" sur **{n_pos}** positions"
+                f"   {e} **Ouvert : {trader_unrealized:+.2f}$ ({pnl_pct:+.1f}%)** "
+                f"sur {len(open_pos)} pos"
             )
+        if trader_realized != 0:
+            e2 = "📈" if trader_realized >= 0 else "📉"
+            lines.append(f"   {e2} **Réalisé : {trader_realized:+.2f}$**")
 
-            for p in positions[:5]:
-                pnl_e = "📈" if p.pnl_pct >= 0 else "📉"
-                outcome = p.outcome or "?"
-                val = p.size * p.current_price
-                title = p.title[:30] + "…" if len(p.title) > 30 else p.title
+        # ── Top positions ouvertes ──
+        if open_pos:
+            open_pos.sort(key=lambda p: abs(p.cash_pnl), reverse=True)
+            for p in open_pos[:5]:
+                e = "📈" if p.cash_pnl >= 0 else "📉"
+                title = p.title[:28] + "…" if len(p.title) > 28 else p.title
                 lines.append(
-                    f"   {pnl_e} **{outcome}** @ {p.avg_price:.2f}→{p.current_price:.2f} "
-                    f"({p.pnl_pct:+.0f}%) {val:.0f}$"
+                    f"   {e} **{p.outcome}** {p.avg_price:.2f}→{p.current_price:.2f} "
+                    f"({p.pnl_pct:+.0f}%) {p.cash_pnl:+.0f}$"
                 )
-                if title:
-                    lines.append(f"      _{title}_")
-            if len(positions) > 5:
-                lines.append(f"   _… +{len(positions) - 5} autres positions_")
+                lines.append(f"      _{title}_")
+            if len(open_pos) > 5:
+                lines.append(f"   _… +{len(open_pos) - 5} autres_")
 
         # ── Derniers trades ──
         if activity:
-            recent = activity[:3]
             lines.append("   ─ Derniers trades ─")
-            for a in recent:
+            for a in activity[:3]:
                 side_e = "🟢" if a.side == "BUY" else "🔴"
+                title = a.title[:25] + "…" if len(a.title) > 25 else a.title
                 lines.append(
-                    f"   {side_e} {a.side} **{a.outcome}** • "
+                    f"   {side_e} {a.side} **{a.outcome}** "
                     f"{a.usdc_size:.1f}$ @ {a.price:.2f}"
                 )
+                lines.append(f"      _{title}_")
 
         lines.append("")
 
     # ── Totaux ──
     lines.append("━━━━━━━━━━━━━━━━━━━━")
-    grand_pnl_pct = (grand_total_pnl / grand_total_invested * 100) if grand_total_invested > 0 else 0
-    pnl_e = "📈" if grand_total_pnl >= 0 else "📉"
+    total_pnl = grand_unrealized + grand_realized
+    pnl_pct = (grand_unrealized / grand_invested * 100) if grand_invested > 0 else 0
+    e = "📈" if total_pnl >= 0 else "📉"
     lines.append(
-        f"{pnl_e} **TOTAL : {grand_total_pnl:+.2f} USDC ({grand_pnl_pct:+.1f}%)**\n"
-        f"💰 Investi : {grand_total_invested:.0f}$ • "
-        f"{total_positions} positions sur {len(followed)} trader(s)"
+        f"{e} **P&L ouvert : {grand_unrealized:+.2f}$ ({pnl_pct:+.1f}%)**\n"
+        f"📈 **P&L réalisé : {grand_realized:+.2f}$**\n"
+        f"💰 Investi : {grand_invested:.0f}$ • "
+        f"{total_positions} pos ouvertes sur {len(followed)} trader(s)"
     )
     lines.append(
         "\n_📋 Récap = vos trades copiés par le bot_"
@@ -1058,7 +1073,6 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_dashboard"),
             InlineKeyboardButton("📋 Récap", callback_data="menu_recap"),
         ],
-        [InlineKeyboardButton("📊 Détail Trader", callback_data="trader_report")],
         [InlineKeyboardButton("🏠 Menu", callback_data="menu_back")],
     ]
     await query.edit_message_text(
@@ -1151,24 +1165,22 @@ async def _menu_recap_impl(query) -> None:
     vol_today = sum(t.gross_amount_usdc for t in trades_today)
     vol_week = sum(t.gross_amount_usdc for t in trades_week)
 
-    # P&L global
-    buy_avg: dict[str, list[float]] = {}
-    for t in all_trades:
-        if t.side == TradeSide.BUY:
-            buy_avg.setdefault(t.token_id, []).append(t.price)
-    total_pnl = 0.0
-    wins = 0
-    closed = 0
-    for t in all_trades:
-        if t.side == TradeSide.SELL and t.token_id in buy_avg:
-            avg = sum(buy_avg[t.token_id]) / len(buy_avg[t.token_id])
-            pnl = (t.price - avg) * t.shares
-            total_pnl += pnl
-            closed += 1
-            if pnl > 0:
-                wins += 1
+    # P&L global — utiliser settlement_pnl pour les trades settled
+    settled_trades = [t for t in all_trades if t.is_settled and t.settlement_pnl is not None]
+    total_pnl = sum(t.settlement_pnl for t in settled_trades)
+    wins = sum(1 for t in settled_trades if t.settlement_pnl > 0)
+    closed = len(settled_trades)
+
+    # Fetch prix live pour positions ouvertes (non settled)
+    from bot.services.polymarket import polymarket_client
+    open_buys = [t for t in all_trades if t.side == TradeSide.BUY and not t.is_settled]
+    unrealized_pnl = 0.0
+    for t in open_buys:
+        cur = await polymarket_client.get_price(t.token_id)
+        if cur > 0 and t.shares > 0:
+            unrealized_pnl += (cur * t.shares) - t.net_amount_usdc
+
     global_wr = f"{(wins / closed) * 100:.0f}%" if closed > 0 else "N/A"
-    global_pnl = f"{total_pnl:+.2f}" if closed > 0 else "N/A"
 
     mode_label = "📝 PAPER" if is_paper else "💵 LIVE"
     lines = [
@@ -1177,11 +1189,15 @@ async def _menu_recap_impl(query) -> None:
         "_Ce que le bot a exécuté pour vous._\n",
         f"📅 Aujourd'hui : **{len(trades_today)}** trades • **{vol_today:.2f}** USDC",
         f"📆 Cette semaine : **{len(trades_week)}** trades • **{vol_week:.2f}** USDC",
-        f"📊 Win rate : **{global_wr}** • P&L réalisé : **{global_pnl} USDC**",
-        f"_⚠️ P&L = uniquement les trades fermés (vendus/résolus)._\n",
+        f"📊 Win rate : **{global_wr}** ({wins}/{closed} résolus)",
+        f"📈 P&L réalisé : **{total_pnl:+.2f} USDC**" if closed > 0 else "",
+        f"📉 P&L ouvert : **{unrealized_pnl:+.2f} USDC**" if open_buys else "",
+        "",
         "━━━━━━━━━━━━━━━━━━━━",
         "**DÉTAIL PAR TRADER COPIÉ**\n",
     ]
+    # Remove empty lines from conditional entries
+    lines = [l for l in lines if l or l == ""]
 
     for wallet in followed:
         w_short = f"{wallet[:6]}...{wallet[-4:]}"
@@ -1195,22 +1211,11 @@ async def _menu_recap_impl(query) -> None:
         t_week = [t for t in trader_trades if t.created_at >= week_start]
         t_vol = sum(t.gross_amount_usdc for t in trader_trades)
 
-        # Win rate par trader
-        t_buy_avg: dict[str, list[float]] = {}
-        for t in trader_trades:
-            if t.side == TradeSide.BUY:
-                t_buy_avg.setdefault(t.token_id, []).append(t.price)
-        t_pnl = 0.0
-        t_wins = 0
-        t_closed = 0
-        for t in trader_trades:
-            if t.side == TradeSide.SELL and t.token_id in t_buy_avg:
-                avg = sum(t_buy_avg[t.token_id]) / len(t_buy_avg[t.token_id])
-                pnl = (t.price - avg) * t.shares
-                t_pnl += pnl
-                t_closed += 1
-                if pnl > 0:
-                    t_wins += 1
+        # P&L par trader — utiliser settlement_pnl
+        t_settled = [t for t in trader_trades if t.is_settled and t.settlement_pnl is not None]
+        t_pnl = sum(t.settlement_pnl for t in t_settled)
+        t_wins = sum(1 for t in t_settled if t.settlement_pnl > 0)
+        t_closed = len(t_settled)
         t_wr = f"{(t_wins / t_closed) * 100:.0f}%" if t_closed > 0 else "—"
         t_pnl_str = f"{t_pnl:+.2f}" if t_closed > 0 else "—"
 
@@ -1228,10 +1233,11 @@ async def _menu_recap_impl(query) -> None:
             if len(q) > 28:
                 q = q[:25] + "..."
             date_s = rt.created_at.strftime("%d/%m %H:%M")
-            paper = " 📝" if rt.is_paper else ""
+            settled = " ✅" if rt.is_settled else ""
+            pnl_s = f" ({rt.settlement_pnl:+.1f})" if rt.settlement_pnl else ""
             lines.append(
                 f"   {side_emoji} {date_s} | "
-                f"{rt.net_amount_usdc:.2f} USDC{paper}"
+                f"{rt.net_amount_usdc:.2f} USDC{settled}{pnl_s}"
             )
             lines.append(f"      _{q}_")
         lines.append("")

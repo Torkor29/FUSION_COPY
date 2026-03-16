@@ -444,26 +444,10 @@ async def build_report_data(
         sells = [t for t in tf_trades if t.side == TradeSide.SELL]
         volume = sum(t.gross_amount_usdc for t in tf_trades)
 
-        # Realized PNL from sells
-        buy_prices: dict[str, list[float]] = {}
-        for t in tf_trades:
-            if t.side == TradeSide.BUY:
-                buy_prices.setdefault(t.token_id, []).append(t.price)
-
+        # Realized PNL — use settlement_pnl (calculated by settlement service)
         realized_pnl = 0.0
         wins = 0
         losses = 0
-        for t in sells:
-            if t.token_id in buy_prices and buy_prices[t.token_id]:
-                avg_buy = sum(buy_prices[t.token_id]) / len(buy_prices[t.token_id])
-                pnl = (t.price - avg_buy) * t.shares
-                realized_pnl += pnl
-                if pnl > 0:
-                    wins += 1
-                else:
-                    losses += 1
-
-        # Also count settled trades PNL
         for t in tf_trades:
             if t.is_settled and t.settlement_pnl is not None:
                 realized_pnl += t.settlement_pnl

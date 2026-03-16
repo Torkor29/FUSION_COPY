@@ -31,26 +31,23 @@ async def cleanup_expired_otps() -> None:
         logger.info(f"Cleaned up {count} expired OTP challenges")
 
 
-async def settle_paper_trades() -> None:
-    """Settle paper trades whose markets have resolved. Runs every 5 minutes.
+async def settle_trades(bot=None) -> None:
+    """Settle ALL trades (paper + live) whose markets have resolved.
 
-    Logic:
-    - Find all FILLED paper trades that are NOT settled
-    - Group by market_id (conditionId)
-    - Check each market for resolution via Gamma API
-    - If resolved:
-        - Winning token → shares × $1.00 credited to paper_balance
-        - Losing token → $0.00 (loss already debited at buy time)
-        - Mark trade as is_settled=True with settlement_pnl
+    Runs every 2 minutes. For each unsettled FILLED BUY trade:
+    - Check market resolution via Polymarket API
+    - Calculate PNL: winner gets shares × $1, loser gets $0
+    - Store market_outcome and settlement_pnl
+    - Paper mode: update paper_balance
+    - Notify user of result (auto-delete after 120s)
     """
     from bot.services.polymarket import polymarket_client
 
     try:
         async with async_session() as session:
-            # Find all unsettled paper trades
+            # Find ALL unsettled trades (paper + live)
             result = await session.execute(
                 select(Trade).where(
-                    Trade.is_paper == True,  # noqa: E712
                     Trade.is_settled == False,  # noqa: E712
                     Trade.status == TradeStatus.FILLED,
                     Trade.side == TradeSide.BUY,
@@ -68,7 +65,7 @@ async def settle_paper_trades() -> None:
 
             logger.info(
                 f"Checking {len(by_market)} market(s) for "
-                f"{len(unsettled)} unsettled paper trade(s)"
+                f"{len(unsettled)} unsettled trade(s)"
             )
 
             settled_count = 0
@@ -84,43 +81,103 @@ async def settle_paper_trades() -> None:
                     continue  # Market still open
 
                 winning_token = resolution.get("winning_token_id", "")
+                winning_outcome = resolution.get("winning_outcome", "")
 
                 for trade in trades:
-                    shares = trade.shares or 0
+                    shares = trade.shares or (
+                        trade.net_amount_usdc / trade.price
+                        if trade.price > 0 else 0
+                    )
                     invested = trade.net_amount_usdc
 
-                    if trade.token_id == winning_token:
-                        # Winner: shares × $1.00
+                    won = trade.token_id == winning_token
+                    if won:
                         payout = shares * 1.0
                         pnl = payout - invested
                     else:
-                        # Loser: $0.00 payout
                         payout = 0.0
                         pnl = -invested
 
                     trade.is_settled = True
                     trade.settlement_pnl = pnl
+                    trade.market_outcome = winning_outcome
 
-                    # Credit payout to user's paper balance
-                    user = await session.get(User, trade.user_id)
-                    if user and payout > 0:
-                        user.paper_balance += payout
+                    # Credit payout to paper balance
+                    if trade.is_paper:
+                        user = await session.get(User, trade.user_id)
+                        if user:
+                            user.paper_balance = (user.paper_balance or 0) + payout
 
                     settled_count += 1
                     logger.info(
-                        f"Settled paper trade {trade.trade_id}: "
-                        f"{'WIN' if pnl >= 0 else 'LOSS'} "
+                        f"Settled {'paper' if trade.is_paper else 'live'} "
+                        f"trade {trade.trade_id}: "
+                        f"{'WIN' if won else 'LOSS'} "
                         f"pnl={pnl:+.2f} payout={payout:.2f}"
                     )
 
+                    # Notify user
+                    if bot:
+                        await _notify_settlement(
+                            bot, session, trade, won, pnl, payout
+                        )
+
             if settled_count > 0:
                 await session.commit()
-                logger.info(f"Settled {settled_count} paper trade(s) (checked {checked_count}/{len(by_market)} markets)")
+                logger.info(f"Settled {settled_count} trade(s) (checked {checked_count}/{len(by_market)} markets)")
             elif checked_count > 0:
                 logger.debug(f"Checked {checked_count}/{len(by_market)} markets — none resolved yet")
 
     except Exception as e:
-        logger.error(f"Error settling paper trades: {e}", exc_info=True)
+        logger.error(f"Error settling trades: {e}", exc_info=True)
+
+
+# Keep old name as alias for backward compat with main.py
+settle_paper_trades = settle_trades
+
+
+async def _notify_settlement(bot, session, trade, won, pnl, payout):
+    """Send settlement notification to user."""
+    import asyncio
+
+    try:
+        user = await session.get(User, trade.user_id)
+        if not user or not user.telegram_id:
+            return
+
+        emoji = "🟢" if won else "🔴"
+        result_text = "GAGNÉ" if won else "PERDU"
+        paper = " 📝 PAPER" if trade.is_paper else ""
+        q = trade.market_question or trade.market_id[:20]
+        outcome = trade.market_outcome or "?"
+
+        text = (
+            f"{emoji} **MARCHÉ RÉSOLU**{paper}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 {q}\n"
+            f"🏆 Résultat : **{outcome}** → **{result_text}**\n"
+            f"💰 Mise : {trade.net_amount_usdc:.2f} USDC\n"
+            f"💵 Payout : {payout:.2f} USDC\n"
+            f"📈 P&L : **{pnl:+.2f} USDC**"
+        )
+
+        msg = await bot.send_message(
+            chat_id=user.telegram_id,
+            text=text,
+            parse_mode="Markdown",
+        )
+
+        # Auto-delete after 120s
+        async def _auto_del():
+            await asyncio.sleep(120)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_auto_del())
+
+    except Exception as e:
+        logger.error(f"Settlement notification error: {e}")
 
 
 async def health_check() -> None:

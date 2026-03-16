@@ -78,6 +78,7 @@ class Trade(Base):
     is_paper: Mapped[bool] = mapped_column(default=False)
     is_settled: Mapped[bool] = mapped_column(default=False)
     settlement_pnl: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    market_outcome: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="trades")
