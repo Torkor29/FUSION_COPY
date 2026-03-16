@@ -973,10 +973,10 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for wallet in followed:
         w_short = f"{wallet[:6]}...{wallet[-4:]}"
 
-        # Fetch positions + activity 24h in parallel concept (sequential for simplicity)
+        # Fetch positions + activity (latest 20 for display)
         positions = await polymarket_client.get_positions_by_address(wallet)
         activity = await polymarket_client.get_activity_by_address(
-            wallet, limit=500, start=now_ts - 86400
+            wallet, limit=20, start=now_ts - 86400
         )
 
         # Séparer positions ouvertes vs résolues
@@ -1009,14 +1009,17 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"24h : {profile.pnl_1d:+,.0f}$"
             )
 
-        # ── Activity par timeframe ──
+        # ── Activity par timeframe (appels API séparés pour données précises) ──
         tf_parts = []
-        for label, secs in [("1h", 3600), ("3h", 10800), ("5h", 18000), ("24h", 86400)]:
-            cutoff = now_ts - secs
-            tf_acts = [a for a in activity if a.timestamp >= cutoff]
+        for label, secs in [("1h", 3600), ("24h", 86400)]:
+            start_ts = now_ts - secs
+            tf_acts = await polymarket_client.get_activity_by_address(
+                wallet, limit=500, start=start_ts
+            )
             if tf_acts:
                 vol = sum(a.usdc_size for a in tf_acts)
-                tf_parts.append(f"{label}:{len(tf_acts)}t/{vol:.0f}$")
+                count_str = f"{len(tf_acts)}+" if len(tf_acts) >= 500 else str(len(tf_acts))
+                tf_parts.append(f"{label}:{count_str}t/{vol:,.0f}$")
         if tf_parts:
             lines.append(f"   📊 {' | '.join(tf_parts)}")
 
