@@ -1809,6 +1809,32 @@ async def resume_copy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # ── Back to main menu ───────────────────────────────
 
+async def onboard_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle 'Accéder au menu principal' from /start welcome (photo message).
+
+    The /start message is a photo (banner), so we can't edit_message_text on it.
+    Instead, send a NEW text message with the main menu.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    tg_user = query.from_user
+
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, tg_user.id)
+        if not user:
+            from bot.services.user_service import create_user
+            user = await create_user(session, tg_user.id, username=tg_user.username)
+
+        text, keyboard = _build_main_menu_content(tg_user, user)
+
+    await query.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -2081,6 +2107,7 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(stop_copy, pattern="^stop_copy$"),
         CallbackQueryHandler(resume_copy, pattern="^resume_copy$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
-        # Fallback: "Accéder au menu principal" quand ConversationHandler /start est terminé
-        CallbackQueryHandler(menu_back, pattern="^onboard_menu_main$"),
+        # Fallback: "Accéder au menu principal" — envoie un NOUVEAU message
+        # (le message /start est une photo, on ne peut pas l'éditer en texte)
+        CallbackQueryHandler(onboard_to_main_menu, pattern="^onboard_menu_main$"),
     ]
