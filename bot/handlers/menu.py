@@ -3112,20 +3112,38 @@ _SCANNER_CATEGORIES = [
     "Economy", "Geopolitics", "Culture", "Weather", "Elections",
 ]
 
-_VOLUME_PRESETS = [
-    ("Tout", None, None),
-    ("< 1M$", None, 1_000_000),
-    ("1M-10M$", 1_000_000, 10_000_000),
-    ("10M-100M$", 10_000_000, 100_000_000),
-    ("> 100M$", 100_000_000, None),
+# Separate min and max presets for positions
+_POS_MIN_PRESETS = [
+    ("—", None),      # No filter
+    ("≥ 10", 10),
+    ("≥ 50", 50),
+    ("≥ 100", 100),
+    ("≥ 500", 500),
 ]
 
-_TRADES_PRESETS = [
-    ("Tout", None, None),
-    ("< 100", None, 100),
-    ("100-1k", 100, 1_000),
-    ("1k-10k", 1_000, 10_000),
-    ("> 10k", 10_000, None),
+_POS_MAX_PRESETS = [
+    ("—", None),      # No filter
+    ("≤ 50", 50),
+    ("≤ 100", 100),
+    ("≤ 500", 500),
+    ("≤ 1000", 1_000),
+]
+
+# Separate min and max presets for volume
+_VOL_MIN_PRESETS = [
+    ("—", None),      # No filter
+    ("≥ 10k$", 10_000),
+    ("≥ 100k$", 100_000),
+    ("≥ 1M$", 1_000_000),
+    ("≥ 10M$", 10_000_000),
+]
+
+_VOL_MAX_PRESETS = [
+    ("—", None),      # No filter
+    ("≤ 100k$", 100_000),
+    ("≤ 1M$", 1_000_000),
+    ("≤ 10M$", 10_000_000),
+    ("≤ 100M$", 100_000_000),
 ]
 
 
@@ -3134,14 +3152,37 @@ def _get_scan_config(context) -> dict:
     if "scanner" not in context.user_data:
         context.user_data["scanner"] = {
             "categories": ["Crypto"],
-            "pnl_1d": True,
-            "pnl_1w": True,
-            "pnl_1m": True,
-            "trades_preset": 0,  # Index into _TRADES_PRESETS
-            "volume_preset": 0,  # Index into _VOLUME_PRESETS
-            "period": "1w",
+            "pnl_1d": False,
+            "pnl_1w": False,
+            "pnl_1m": False,
+            "pos_min_idx": 0,   # Index into _POS_MIN_PRESETS (0 = no filter)
+            "pos_max_idx": 0,   # Index into _POS_MAX_PRESETS (0 = no filter)
+            "vol_min_idx": 0,   # Index into _VOL_MIN_PRESETS (0 = no filter)
+            "vol_max_idx": 0,   # Index into _VOL_MAX_PRESETS (0 = no filter)
         }
-    return context.user_data["scanner"]
+    # Migrate old config format
+    cfg = context.user_data["scanner"]
+    for key in ("pos_min_idx", "pos_max_idx", "vol_min_idx", "vol_max_idx"):
+        if key not in cfg:
+            cfg[key] = 0
+    # Remove old keys
+    for old_key in ("trades_preset", "volume_preset", "period"):
+        cfg.pop(old_key, None)
+    return cfg
+
+
+def _auto_period(cfg: dict) -> str:
+    """Auto-determine leaderboard period from PNL filters.
+
+    Uses the longest PNL period that is enabled. If none, defaults to 'all'.
+    """
+    if cfg.get("pnl_1m"):
+        return "1m"
+    if cfg.get("pnl_1w"):
+        return "1w"
+    if cfg.get("pnl_1d"):
+        return "1d"
+    return "all"
 
 
 def _build_scanner_menu(cfg: dict) -> tuple[str, list]:
@@ -3152,24 +3193,22 @@ def _build_scanner_menu(cfg: dict) -> tuple[str, list]:
 
     # PNL filters
     pnl_parts = []
-    if cfg["pnl_1d"]:
-        pnl_parts.append("1D ✅")
-    else:
-        pnl_parts.append("1D ❌")
-    if cfg["pnl_1w"]:
-        pnl_parts.append("1W ✅")
-    else:
-        pnl_parts.append("1W ❌")
-    if cfg["pnl_1m"]:
-        pnl_parts.append("1M ✅")
-    else:
-        pnl_parts.append("1M ❌")
+    for key, label in [("pnl_1d", "1D"), ("pnl_1w", "1W"), ("pnl_1m", "1M")]:
+        pnl_parts.append(f"{label} {'✅' if cfg[key] else '—'}")
 
-    # Presets
-    trades_label = _TRADES_PRESETS[cfg["trades_preset"]][0]
-    volume_label = _VOLUME_PRESETS[cfg["volume_preset"]][0]
-    period_labels = {"1d": "Aujourd'hui", "1w": "Cette semaine", "1m": "Ce mois", "all": "Tout"}
-    period_label = period_labels.get(cfg["period"], cfg["period"])
+    # Positions labels
+    pos_min_label = _POS_MIN_PRESETS[cfg["pos_min_idx"]][0]
+    pos_max_label = _POS_MAX_PRESETS[cfg["pos_max_idx"]][0]
+    pos_text = f"min {pos_min_label} / max {pos_max_label}"
+
+    # Volume labels
+    vol_min_label = _VOL_MIN_PRESETS[cfg["vol_min_idx"]][0]
+    vol_max_label = _VOL_MAX_PRESETS[cfg["vol_max_idx"]][0]
+    vol_text = f"min {vol_min_label} / max {vol_max_label}"
+
+    # Auto-period info
+    period = _auto_period(cfg)
+    period_labels = {"1d": "1 jour", "1w": "1 semaine", "1m": "1 mois", "all": "tout"}
 
     text = (
         "🔍 **SCANNER DE TRADERS**\n"
@@ -3178,16 +3217,16 @@ def _build_scanner_menu(cfg: dict) -> tuple[str, list]:
         "Le scanner analyse le leaderboard Polymarket\n"
         "et filtre les traders selon tes critères.\n\n"
         f"📂 **Catégories** : {cat_text}\n"
-        f"📅 **Période** : {period_label}\n"
-        f"💰 **Bénéfice** : {' | '.join(pnl_parts)}\n"
-        f"📊 **Nb marchés** : {trades_label}\n"
-        f"💵 **Volume** : {volume_label}\n"
+        f"💰 **Bénéfice requis** : {' | '.join(pnl_parts)}\n"
+        f"📊 **Positions** : {pos_text}\n"
+        f"💵 **Volume** : {vol_text}\n"
+        f"📅 _Période auto : {period_labels[period]}_\n"
     )
 
     # Build keyboard
     keyboard = []
 
-    # Row 1-2: Category toggles (5 per row)
+    # Category toggles (4 per row)
     for row_start in range(0, len(_SCANNER_CATEGORIES), 4):
         row = []
         for cat in _SCANNER_CATEGORIES[row_start:row_start + 4]:
@@ -3197,45 +3236,39 @@ def _build_scanner_menu(cfg: dict) -> tuple[str, list]:
             ))
         keyboard.append(row)
 
-    # Period selector
+    # PNL filters row
     keyboard.append([
         InlineKeyboardButton(
-            f"{'🔘' if cfg['period'] == '1d' else '⚪'} 1D",
-            callback_data="scan_period_1d",
-        ),
-        InlineKeyboardButton(
-            f"{'🔘' if cfg['period'] == '1w' else '⚪'} 1W",
-            callback_data="scan_period_1w",
-        ),
-        InlineKeyboardButton(
-            f"{'🔘' if cfg['period'] == '1m' else '⚪'} 1M",
-            callback_data="scan_period_1m",
-        ),
-    ])
-
-    # PNL filters
-    keyboard.append([
-        InlineKeyboardButton(
-            f"{'✅' if cfg['pnl_1d'] else '❌'} Bénéf 1D",
+            f"{'✅' if cfg['pnl_1d'] else '⬜'} Bénéf 1D",
             callback_data="scan_pnl_1d",
         ),
         InlineKeyboardButton(
-            f"{'✅' if cfg['pnl_1w'] else '❌'} Bénéf 1W",
+            f"{'✅' if cfg['pnl_1w'] else '⬜'} Bénéf 1W",
             callback_data="scan_pnl_1w",
         ),
         InlineKeyboardButton(
-            f"{'✅' if cfg['pnl_1m'] else '❌'} Bénéf 1M",
+            f"{'✅' if cfg['pnl_1m'] else '⬜'} Bénéf 1M",
             callback_data="scan_pnl_1m",
         ),
     ])
 
-    # Trades preset
+    # Positions min / max
     keyboard.append([
         InlineKeyboardButton(
-            f"📊 Marchés: {trades_label}", callback_data="scan_trades_next"
+            f"📊 Pos min: {pos_min_label}", callback_data="scan_pos_min"
         ),
         InlineKeyboardButton(
-            f"💵 Volume: {volume_label}", callback_data="scan_volume_next"
+            f"📊 Pos max: {pos_max_label}", callback_data="scan_pos_max"
+        ),
+    ])
+
+    # Volume min / max
+    keyboard.append([
+        InlineKeyboardButton(
+            f"💵 Vol min: {vol_min_label}", callback_data="scan_vol_min"
+        ),
+        InlineKeyboardButton(
+            f"💵 Vol max: {vol_max_label}", callback_data="scan_vol_max"
         ),
     ])
 
@@ -3302,15 +3335,14 @@ async def scan_toggle_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
-async def scan_set_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Set the leaderboard period."""
+async def scan_cycle_pos_min(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cycle through positions minimum presets."""
     query = update.callback_query
-    period = query.data.replace("scan_period_", "")
-
     cfg = _get_scan_config(context)
-    cfg["period"] = period
+    cfg["pos_min_idx"] = (cfg["pos_min_idx"] + 1) % len(_POS_MIN_PRESETS)
 
-    await query.answer(f"📅 Période: {period.upper()}")
+    label = _POS_MIN_PRESETS[cfg["pos_min_idx"]][0]
+    await query.answer(f"📊 Positions min: {label}")
 
     text, keyboard = _build_scanner_menu(cfg)
     await query.edit_message_text(
@@ -3319,14 +3351,14 @@ async def scan_set_period(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
-async def scan_cycle_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Cycle through trades presets."""
+async def scan_cycle_pos_max(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cycle through positions maximum presets."""
     query = update.callback_query
     cfg = _get_scan_config(context)
-    cfg["trades_preset"] = (cfg["trades_preset"] + 1) % len(_TRADES_PRESETS)
+    cfg["pos_max_idx"] = (cfg["pos_max_idx"] + 1) % len(_POS_MAX_PRESETS)
 
-    label = _TRADES_PRESETS[cfg["trades_preset"]][0]
-    await query.answer(f"📊 Marchés: {label}")
+    label = _POS_MAX_PRESETS[cfg["pos_max_idx"]][0]
+    await query.answer(f"📊 Positions max: {label}")
 
     text, keyboard = _build_scanner_menu(cfg)
     await query.edit_message_text(
@@ -3335,14 +3367,30 @@ async def scan_cycle_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
-async def scan_cycle_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Cycle through volume presets."""
+async def scan_cycle_vol_min(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cycle through volume minimum presets."""
     query = update.callback_query
     cfg = _get_scan_config(context)
-    cfg["volume_preset"] = (cfg["volume_preset"] + 1) % len(_VOLUME_PRESETS)
+    cfg["vol_min_idx"] = (cfg["vol_min_idx"] + 1) % len(_VOL_MIN_PRESETS)
 
-    label = _VOLUME_PRESETS[cfg["volume_preset"]][0]
-    await query.answer(f"💵 Volume: {label}")
+    label = _VOL_MIN_PRESETS[cfg["vol_min_idx"]][0]
+    await query.answer(f"💵 Volume min: {label}")
+
+    text, keyboard = _build_scanner_menu(cfg)
+    await query.edit_message_text(
+        text, parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def scan_cycle_vol_max(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cycle through volume maximum presets."""
+    query = update.callback_query
+    cfg = _get_scan_config(context)
+    cfg["vol_max_idx"] = (cfg["vol_max_idx"] + 1) % len(_VOL_MAX_PRESETS)
+
+    label = _VOL_MAX_PRESETS[cfg["vol_max_idx"]][0]
+    await query.answer(f"💵 Volume max: {label}")
 
     text, keyboard = _build_scanner_menu(cfg)
     await query.edit_message_text(
@@ -3381,19 +3429,18 @@ async def scan_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from bot.services.scanner import ScanFilters, run_scan
 
-        trades_preset = _TRADES_PRESETS[cfg["trades_preset"]]
-        volume_preset = _VOLUME_PRESETS[cfg["volume_preset"]]
+        period = _auto_period(cfg)
 
         filters = ScanFilters(
             categories=cfg["categories"],
-            period=cfg["period"],
+            period=period,
             pnl_1d_positive=cfg["pnl_1d"],
             pnl_1w_positive=cfg["pnl_1w"],
             pnl_1m_positive=cfg["pnl_1m"],
-            trades_min=trades_preset[1],
-            trades_max=trades_preset[2],
-            volume_min=volume_preset[1],
-            volume_max=volume_preset[2],
+            trades_min=_POS_MIN_PRESETS[cfg["pos_min_idx"]][1],
+            trades_max=_POS_MAX_PRESETS[cfg["pos_max_idx"]][1],
+            volume_min=_VOL_MIN_PRESETS[cfg["vol_min_idx"]][1],
+            volume_max=_VOL_MAX_PRESETS[cfg["vol_max_idx"]][1],
             max_profiles=30,
         )
 
@@ -3554,9 +3601,10 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_scanner, pattern="^menu_scanner$"),
         CallbackQueryHandler(scan_toggle_category, pattern=r"^scan_cat_.+$"),
         CallbackQueryHandler(scan_toggle_pnl, pattern=r"^scan_pnl_.+$"),
-        CallbackQueryHandler(scan_set_period, pattern=r"^scan_period_.+$"),
-        CallbackQueryHandler(scan_cycle_trades, pattern="^scan_trades_next$"),
-        CallbackQueryHandler(scan_cycle_volume, pattern="^scan_volume_next$"),
+        CallbackQueryHandler(scan_cycle_pos_min, pattern="^scan_pos_min$"),
+        CallbackQueryHandler(scan_cycle_pos_max, pattern="^scan_pos_max$"),
+        CallbackQueryHandler(scan_cycle_vol_min, pattern="^scan_vol_min$"),
+        CallbackQueryHandler(scan_cycle_vol_max, pattern="^scan_vol_max$"),
         CallbackQueryHandler(scan_run, pattern="^scan_run$"),
         CallbackQueryHandler(scan_follow_trader, pattern=r"^scan_follow_0x[a-fA-F0-9]+$"),
         CallbackQueryHandler(paper_set_balance, pattern="^paper_set_balance$"),

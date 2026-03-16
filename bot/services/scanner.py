@@ -39,11 +39,11 @@ LEADERBOARD_PERIODS: dict[str, str] = {
 class ScanFilters:
     """User-configured filters for the scanner."""
     categories: list[str] = field(default_factory=lambda: ["Crypto"])
-    period: str = "1w"  # Leaderboard period to scrape
-    # PNL filters (True = must be positive)
-    pnl_1d_positive: bool = True
-    pnl_1w_positive: bool = True
-    pnl_1m_positive: bool = True
+    period: str = "all"  # Leaderboard period to scrape (auto-determined from PNL filters)
+    # PNL filters (True = must be positive, False = no filter)
+    pnl_1d_positive: bool = False
+    pnl_1w_positive: bool = False
+    pnl_1m_positive: bool = False
     # Trade count filters (None = no filter)
     trades_min: Optional[int] = None
     trades_max: Optional[int] = None
