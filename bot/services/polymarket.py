@@ -317,6 +317,78 @@ class PolymarketClient:
             )
             return []
 
+    async def get_activity_paginated(
+        self,
+        wallet_address: str,
+        start: int,
+        max_trades: int = 5000,
+    ) -> list[Activity]:
+        """Fetch ALL activity for a wallet since `start` timestamp by paginating.
+
+        Uses the `end` param to page backward from newest to oldest.
+        Stops when we reach trades older than `start` or hit max_trades.
+
+        Returns: list of Activity sorted newest-first.
+        """
+        all_activities: list[Activity] = []
+        end_cursor: Optional[int] = None  # No upper bound initially
+        page_size = 500
+
+        for _ in range(max_trades // page_size + 1):
+            params: dict = {
+                "user": wallet_address.lower(),
+                "limit": page_size,
+                "type": "TRADE",
+                "start": start,
+            }
+            if end_cursor:
+                params["end"] = end_cursor
+
+            try:
+                http = await self._get_http()
+                resp = await http.get(f"{DATA_HOST}/activity", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                logger.warning(f"Pagination error for {wallet_address[:10]}...: {e}")
+                break
+
+            if not data:
+                break
+
+            page_activities: list[Activity] = []
+            for a in data:
+                raw_ts = int(a.get("timestamp", 0))
+                ts = raw_ts // 1000 if raw_ts > 1e12 else raw_ts
+                page_activities.append(Activity(
+                    timestamp=ts,
+                    market_id=a.get("conditionId", ""),
+                    title=a.get("title", ""),
+                    outcome=a.get("outcome", ""),
+                    side=a.get("side", ""),
+                    size=float(a.get("size", 0)),
+                    usdc_size=float(a.get("usdcSize", 0)),
+                    price=float(a.get("price", 0)),
+                    tx_hash=a.get("transactionHash", ""),
+                    slug=a.get("slug", ""),
+                ))
+
+            all_activities.extend(page_activities)
+
+            # Stop conditions
+            if len(data) < page_size:
+                break  # No more pages
+            if len(all_activities) >= max_trades:
+                break  # Hit our safety limit
+
+            # Move cursor backward: use oldest timestamp from this page
+            oldest_ts = min(a.timestamp for a in page_activities)
+            if end_cursor and oldest_ts >= end_cursor:
+                break  # Stuck, no progress
+            end_cursor = oldest_ts
+
+        return all_activities
+
     async def get_trader_profile(self, wallet_address: str) -> Optional[TraderProfile]:
         """Fetch a trader's public profile stats by scraping their Polymarket page.
 

@@ -562,24 +562,20 @@ async def build_trader_report_data(username: str, followed_wallets: list[str]) -
         trader.total_invested = sum(p.initial_value for p in open_pos)
         trader.total_current = sum(p.current_value for p in open_pos)
 
-        # Activity per timeframe — separate API call per period
+        # Activity per timeframe — paginated for accurate counts
         for tf_stats, secs in [
             (trader.stats_1h, 3600),
             (trader.stats_24h, 86400),
             (trader.stats_7d, 7 * 86400),
         ]:
             start_ts = now_ts - secs
-            tf_activity = await polymarket_client.get_activity_by_address(
-                wallet, limit=500, start=start_ts
+            tf_activity = await polymarket_client.get_activity_paginated(
+                wallet, start=start_ts, max_trades=10000
             )
             tf_stats.trades_count = len(tf_activity)
             tf_stats.buys = sum(1 for a in tf_activity if a.side == "BUY")
             tf_stats.sells = sum(1 for a in tf_activity if a.side == "SELL")
             tf_stats.volume_usdc = sum(a.usdc_size for a in tf_activity)
-
-            # If 500 results returned, note it's capped
-            if len(tf_activity) >= 500:
-                tf_stats.trades_count = 500  # will show "500+"
 
         # Fetch profile data (PnL total, 1D, 1W, volume) via page scraping
         try:

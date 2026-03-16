@@ -1009,17 +1009,16 @@ async def menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"24h : {profile.pnl_1d:+,.0f}$"
             )
 
-        # ── Activity par timeframe (appels API séparés pour données précises) ──
+        # ── Activity par timeframe (avec pagination pour vrais chiffres) ──
         tf_parts = []
         for label, secs in [("1h", 3600), ("24h", 86400)]:
             start_ts = now_ts - secs
-            tf_acts = await polymarket_client.get_activity_by_address(
-                wallet, limit=500, start=start_ts
+            tf_acts = await polymarket_client.get_activity_paginated(
+                wallet, start=start_ts, max_trades=5000
             )
             if tf_acts:
                 vol = sum(a.usdc_size for a in tf_acts)
-                count_str = f"{len(tf_acts)}+" if len(tf_acts) >= 500 else str(len(tf_acts))
-                tf_parts.append(f"{label}:{count_str}t/{vol:,.0f}$")
+                tf_parts.append(f"{label}:{len(tf_acts)}t/{vol:,.0f}$")
         if tf_parts:
             lines.append(f"   📊 {' | '.join(tf_parts)}")
 
@@ -1638,7 +1637,7 @@ async def dashboard_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
         )
 
-        total_pnl = report_data.grand_unrealized + report_data.grand_realized
+        total_pnl = report_data.grand_unrealized
         await query.message.reply_document(
             document=pdf_buffer,
             filename=filename,
