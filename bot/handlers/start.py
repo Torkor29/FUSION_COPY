@@ -32,19 +32,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     """
     # ── Group context: show menu directly ──────────────────────────
     if update.effective_chat and update.effective_chat.type != "private":
-        from bot.handlers.menu import _build_main_menu_content
         tg_user = update.effective_user
+        # Check user exists first
         async with async_session() as session:
             user = await get_user_by_telegram_id(session, tg_user.id)
-            if not user:
-                bot_username = (await context.bot.get_me()).username or "WenPolymarketBot"
-                await update.message.reply_text(
-                    f"👋 Bienvenue ! Pour configurer votre compte, envoyez `/start` "
-                    f"en message privé à @{bot_username}.",
-                    parse_mode="Markdown",
-                )
-                return ConversationHandler.END
-            text, keyboard = _build_main_menu_content(tg_user, user)
+        if not user:
+            bot_username = (await context.bot.get_me()).username or "WenPolymarketBot"
+            await update.message.reply_text(
+                f"👋 Bienvenue ! Pour configurer votre compte, envoyez `/start` "
+                f"en message privé à @{bot_username}.",
+                parse_mode="Markdown",
+            )
+            return ConversationHandler.END
+
+        # Show context-aware topic menu if in a known topic, else generic menu
+        from bot.handlers.topic_menus import show_topic_menu
+        if await show_topic_menu(update, context):
+            return ConversationHandler.END
+
+        from bot.handlers.menu import _build_main_menu_content
+        text, keyboard = _build_main_menu_content(tg_user, user)
         await update.message.reply_text(
             text,
             parse_mode="Markdown",

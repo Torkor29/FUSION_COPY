@@ -267,6 +267,7 @@ class PositionManager:
             except Exception as e:
                 logger.error("Exit callback failed for position %s: %s", pos.id, e)
 
+        market_name = pos.market_question or pos.market_id
         logger.info(
             "Position exit: user=%d reason=%s market=%s pnl=%.1f%%",
             pos.user_id,

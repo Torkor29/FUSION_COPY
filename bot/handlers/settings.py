@@ -579,14 +579,10 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
             ),
         ],
         # ── V3 Sub-menus (with descriptions) ──
-        [InlineKeyboardButton(
-            "🧠 Smart Analysis — scoring, filtres, tracking",
-            callback_data="set_v3_smart",
-        )],
-        [InlineKeyboardButton(
-            "📉 Positions — trailing stop, sortie auto",
-            callback_data="set_v3_positions",
-        )],
+        [
+            InlineKeyboardButton("🧠 Smart Analysis", callback_data="set_v3_smart"),
+            InlineKeyboardButton("📉 Gestion positions", callback_data="set_v3_positions"),
+        ],
         [
             InlineKeyboardButton("📦 Risque", callback_data="set_v3_portfolio"),
             InlineKeyboardButton("📬 Notifs", callback_data="set_v3_notif"),

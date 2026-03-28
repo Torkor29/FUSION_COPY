@@ -3696,6 +3696,11 @@ async def _menu_mygroup_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/menu command — show main menu from anywhere (DM or group topic)."""
+    # In a group: show context-aware topic menu if the message is in a known topic
+    if update.effective_chat and update.effective_chat.type != "private":
+        from bot.handlers.topic_menus import show_topic_menu
+        if await show_topic_menu(update, context):
+            return
     await _send_main_menu(update.message, update.effective_user)
 
 
