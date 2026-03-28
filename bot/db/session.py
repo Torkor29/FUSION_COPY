@@ -30,16 +30,23 @@ async_session = async_sessionmaker(
 async def _safe_add_column(conn, stmt: str) -> None:
     """Execute an ALTER TABLE ADD COLUMN, ignoring 'duplicate column' errors.
 
-    PostgreSQL supports ``IF NOT EXISTS`` natively.
-    Older SQLite (< 3.35) does not — we catch the duplicate-column error instead.
+    Uses SAVEPOINT on PostgreSQL so a failed ALTER doesn't abort the
+    entire transaction (PostgreSQL aborts all subsequent statements
+    after an error unless rolled back to a savepoint).
     """
     try:
+        # Use nested transaction (SAVEPOINT) to isolate each migration
+        await conn.execute(text("SAVEPOINT _mig"))
         await conn.execute(text(stmt))
+        await conn.execute(text("RELEASE SAVEPOINT _mig"))
     except Exception as exc:
         err = str(exc).lower()
         if "duplicate column" in err or "already exists" in err:
+            # Roll back just this statement, not the whole transaction
+            await conn.execute(text("ROLLBACK TO SAVEPOINT _mig"))
             logger.debug("Column already exists, skipping: %s", stmt[:80])
         else:
+            await conn.execute(text("ROLLBACK TO SAVEPOINT _mig"))
             raise
 
 
