@@ -20,6 +20,7 @@ from bot.handlers.withdraw import get_withdraw_handler
 from bot.handlers.analytics import get_analytics_handlers
 from bot.handlers.group_setup import get_group_setup_handler
 from bot.handlers.mygroup import get_mygroup_handlers
+from bot.handlers.group_actions import get_group_action_handlers
 from bot.services.monitor import MultiMasterMonitor
 from bot.services.clob_ws_monitor import ClobWsMonitor, RawWsEvent
 from bot.services.copytrade import CopyTradeEngine
@@ -50,6 +51,14 @@ logger = logging.getLogger(__name__)
 def build_application() -> Application:
     """Build and configure the Telegram bot application."""
     app = Application.builder().token(settings.telegram_token).build()
+
+    # ── Group action interceptor (MUST be group=-1, before ConversationHandler) ──
+    # Intercepts set_* / menu_* callbacks in group context:
+    #   • Toggles → flip in DB + refresh topic menu
+    #   • Value inputs / complex flows → redirect to DM
+    # Raises ApplicationHandlerStop so ConversationHandler (group=0) never fires in groups.
+    for handler in get_group_action_handlers():
+        app.add_handler(handler, group=-1)
 
     app.add_handler(get_start_handler())
     app.add_handler(get_setup_group_handler())  # setup_my_group from any screen
