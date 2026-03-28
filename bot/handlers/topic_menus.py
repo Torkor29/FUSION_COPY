@@ -37,8 +37,7 @@ async def detect_topic(user_id: int, group_id: int, thread_id: Optional[int]) ->
     """Return which topic a message was sent in.
 
     Returns one of: "signals" | "traders" | "portfolio" | "alerts" | "admin" | "general"
-
-    Queries by group_id only (unique) — user_id may be NULL on older configs.
+    Queries by group_id only (unique) — user_id param kept for API compat but unused.
     """
     if not thread_id:
         return "general"
@@ -51,10 +50,10 @@ async def detect_topic(user_id: int, group_id: int, thread_id: Optional[int]) ->
             )).scalar_one_or_none()
 
             if not config:
-                logger.debug("detect_topic: no GroupConfig for group_id=%s", group_id)
+                logger.debug("detect_topic: no config for group=%s", group_id)
                 return "general"
 
-            topics = {
+            mapping = {
                 "signals":   config.topic_signals_id,
                 "traders":   config.topic_traders_id,
                 "portfolio": config.topic_portfolio_id,
@@ -62,17 +61,14 @@ async def detect_topic(user_id: int, group_id: int, thread_id: Optional[int]) ->
                 "admin":     config.topic_admin_id,
             }
 
-        logger.debug(
-            "detect_topic: group=%s thread=%s topics=%s",
-            group_id, thread_id, topics,
-        )
+        logger.debug("detect_topic: group=%s thread=%s map=%s", group_id, thread_id, mapping)
 
-        for name, tid in topics.items():
-            if tid and tid == thread_id:
+        for name, tid in mapping.items():
+            if tid is not None and tid == thread_id:
                 return name
 
     except Exception as e:
-        logger.debug("detect_topic error: %s", e)
+        logger.warning("detect_topic error: %s", e)
 
     return "general"
 
@@ -85,6 +81,9 @@ async def show_topic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Show a context-aware menu depending on which topic the message was sent in.
 
     Returns True if a topic menu was shown, False if caller should show generic menu.
+
+    IMPORTANT: session stays open while calling _show_*_menu so ORM objects
+    remain live (prevents DetachedInstanceError / MissingGreenlet in async).
     """
     if not update.effective_chat or update.effective_chat.type == "private":
         return False
@@ -93,49 +92,38 @@ async def show_topic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     group_id = update.effective_chat.id
     thread_id = getattr(update.effective_message, "message_thread_id", None)
 
-    # Load user + settings inside session, copy all attributes needed before closing
-    user_id_db = None
-    user_obj = None
-    us_obj = None
+    topic = await detect_topic(0, group_id, thread_id)  # user_id unused now
+    logger.debug("show_topic_menu: topic=%s thread=%s group=%s", topic, thread_id, group_id)
+
+    if topic == "general":
+        return False  # let caller show default menu
 
     try:
         async with async_session() as session:
-            user_obj = await get_user_by_telegram_id(session, tg_user.id)
-            if not user_obj:
+            user = await get_user_by_telegram_id(session, tg_user.id)
+            if not user:
                 return False
-            us_obj = await get_or_create_settings(session, user_obj)
+            us = await get_or_create_settings(session, user)
 
-            # Force-load all attributes while session is open
-            user_id_db = user_obj.id
-            _ = user_obj.is_active
-            _ = user_obj.is_paused
-            _ = user_obj.paper_trading
-            _ = user_obj.wallet_address
-            _ = user_obj.paper_balance
+            # Session stays open → ORM objects are live throughout
+            if topic == "signals":
+                await _show_signals_menu(update, user, us)
+            elif topic == "traders":
+                await _show_traders_menu(update, user, us)
+            elif topic == "portfolio":
+                await _show_portfolio_menu(update, user, us)
+            elif topic == "alerts":
+                await _show_alerts_menu(update, user, us)
+            elif topic == "admin":
+                await _show_admin_menu(update, user, us)
+            else:
+                return False
+
+        return True
+
     except Exception as e:
-        logger.debug("show_topic_menu user load error: %s", e)
+        logger.warning("show_topic_menu error (topic=%s): %s", topic, e, exc_info=True)
         return False
-
-    topic = await detect_topic(user_id_db, group_id, thread_id)
-    logger.debug("show_topic_menu: topic=%s thread=%s group=%s", topic, thread_id, group_id)
-
-    if topic == "signals":
-        await _show_signals_menu(update, user_obj, us_obj)
-        return True
-    elif topic == "traders":
-        await _show_traders_menu(update, user_obj, us_obj)
-        return True
-    elif topic == "portfolio":
-        await _show_portfolio_menu(update, user_obj, us_obj)
-        return True
-    elif topic == "alerts":
-        await _show_alerts_menu(update, user_obj, us_obj)
-        return True
-    elif topic == "admin":
-        await _show_admin_menu(update, user_obj, us_obj)
-        return True
-
-    return False  # "general" → caller shows default menu
 
 
 # ─────────────────────────────────────────────
@@ -232,7 +220,7 @@ async def _show_traders_menu(update: Update, user: User, us) -> None:
     from bot.models.trader_stats import TraderStats
     from sqlalchemy import select
 
-    followed = list(us.followed_wallets or [])
+    followed = list(getattr(us, "followed_wallets", None) or [])
     auto_pause = bool(getattr(us, "auto_pause_cold_traders", True))
     cold_thresh = float(getattr(us, "cold_trader_threshold", 40.0))
     hot_boost  = float(getattr(us, "hot_streak_boost", 1.5))
