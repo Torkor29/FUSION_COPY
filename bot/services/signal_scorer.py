@@ -415,111 +415,100 @@ class SignalScorer:
 
     @staticmethod
     def format_score(score: SignalScore, signal) -> str:
-        """Format a scored signal for Telegram — fully transparent breakdown."""
+        """Format détaillé pour le topic Signals — breakdown transparent."""
+        from bot.utils.formatting import bar, badge_score, short_wallet as sw, SEP
+
         c = score.components or {}
-
-        # Grade
-        if score.total_score >= 75:
-            grade = "🟢 EXCELLENT"
-        elif score.total_score >= 50:
-            grade = "🟡 BON"
-        elif score.total_score >= 30:
-            grade = "🟠 FAIBLE"
-        else:
-            grade = "🔴 IGNORÉ"
-
+        grade = badge_score(score.total_score)
         market_name = getattr(signal, "market_question", None) or signal.market_id[:20]
-        short_wallet = f"{signal.master_wallet[:6]}...{signal.master_wallet[-4:]}"
+        wallet = sw(signal.master_wallet)
 
-        # Visual bar
-        def bar(val: float) -> str:
-            filled = int(val / 100 * 5)
-            return "█" * filled + "░" * (5 - filled)
-
-        # Build detailed breakdown with explanations
-        criteria = [
-            ("spread", "Spread", "15%",
-             "Écart entre prix d'achat et de vente. Serré = facile à exécuter."),
-            ("liquidity", "Liquidité", "15%",
-             "Volume de trading 24h. Élevé = marché actif."),
-            ("conviction", "Conviction", "20%",
-             "Taille du trade vs portfolio du trader. Gros = il y croit."),
-            ("trader_form", "Forme trader", "20%",
-             "Win rate des 7 derniers jours. Élevé = en forme."),
-            ("timing", "Timing", "15%",
-             "Distance à l'expiry. Idéal = 2h à 48h."),
-            ("consensus", "Consensus", "15%",
-             "Nombre d'autres traders suivis sur le même marché."),
+        CRITERIA_ORDER = [
+            ("spread", "📏 Spread"),
+            ("liquidity", "💧 Liquidité"),
+            ("conviction", "💪 Conviction"),
+            ("trader_form", "📈 Forme trader"),
+            ("timing", "⏱ Timing"),
+            ("consensus", "👥 Consensus"),
         ]
 
         lines = [
-            f"📊 *Score: {score.total_score:.0f}/100* {grade}\n",
+            f"📊 *{score.total_score:.0f}/100* {grade}\n",
             f"*{signal.side}* sur _{market_name}_",
-            f"Trader: `{short_wallet}` | Prix: ${signal.price:.4f}\n",
-            "*── Détail du calcul ──*\n",
+            f"Trader: `{wallet}` | Prix: ${signal.price:.4f}\n",
+            f"*── Détail du calcul ──*\n",
         ]
 
-        for key, label, weight, description in criteria:
+        # Sort by weighted contribution (biggest impact first)
+        sorted_criteria = sorted(
+            CRITERIA_ORDER,
+            key=lambda x: c.get(x[0], {}).get("weighted", 0)
+            if isinstance(c.get(x[0]), dict) else 0,
+            reverse=True,
+        )
+
+        for key, label in sorted_criteria:
             comp = c.get(key, {})
             if isinstance(comp, dict):
                 s = comp.get("score", 50)
                 enabled = comp.get("enabled", True)
-                weight_pct = comp.get("weight_pct", int(float(weight.rstrip("%"))))
+                wpct = comp.get("weight_pct", 15)
                 weighted = comp.get("weighted", 0)
                 reason = comp.get("reason", "—")
             else:
                 s = float(comp)
                 enabled = True
-                weight_pct = int(float(weight.rstrip("%")))
-                weighted = round(s * DEFAULT_WEIGHTS.get(key, 0), 1)
+                wpct = 15
+                weighted = round(s * DEFAULT_WEIGHTS.get(key, 0.15), 1)
                 reason = "—"
 
             if not enabled:
-                lines.append(f"⬜ ~~{label}~~ — _désactivé_\n")
+                lines.append(f"⬜ {label} — _désactivé_")
             else:
-                lines.append(
-                    f"{bar(s)} *{label}* ({weight_pct}%) → {weighted:.0f} pts"
-                )
-                lines.append(f"   _{reason}_\n")
+                vbar = bar(s, 100, 10)
+                lines.append(f"{vbar} {label} ({wpct}%) → *{weighted:.0f}* pts")
+                lines.append(f"  _{reason}_")
 
-        # Total calculation
-        lines.append(f"*Total: {score.total_score:.0f}/100*")
+        lines.append(f"\n{SEP}")
+        lines.append(f"*Total: {score.total_score:.0f}/100* {grade}")
 
         return "\n".join(lines)
 
     @staticmethod
     def format_score_compact(score: SignalScore, signal) -> str:
-        """Format compact pour les notifications de trade (pas le topic Signals)."""
+        """Format compact pour la notification de trade copié."""
+        from bot.utils.formatting import bar, badge_score
+
         c = score.components or {}
+        grade = badge_score(score.total_score)
 
-        if score.total_score >= 75:
-            grade = "🟢 EXCELLENT"
-        elif score.total_score >= 50:
-            grade = "🟡 BON"
-        elif score.total_score >= 30:
-            grade = "🟠 FAIBLE"
-        else:
-            grade = "🔴 IGNORÉ"
-
-        # Find the strongest and weakest criteria
-        best_key, worst_key = None, None
-        best_score, worst_score = -1, 101
-        for key in WEIGHTS:
-            comp = c.get(key, {})
-            s = comp.get("score", 50) if isinstance(comp, dict) else float(comp)
-            if s > best_score:
-                best_score, best_key = s, key
-            if s < worst_score:
-                worst_score, worst_key = s, key
-
-        labels = {
+        LABELS = {
             "spread": "spread", "liquidity": "liquidité",
-            "conviction": "conviction", "trader_form": "forme trader",
+            "conviction": "conviction", "trader_form": "forme",
             "timing": "timing", "consensus": "consensus",
         }
 
+        # Find strongest and weakest enabled criteria
+        best_key, worst_key = None, None
+        best_s, worst_s = -1, 101
+        for key in DEFAULT_WEIGHTS:
+            comp = c.get(key, {})
+            if isinstance(comp, dict):
+                if not comp.get("enabled", True):
+                    continue
+                s = comp.get("score", 50)
+            else:
+                s = float(comp)
+            if s > best_s:
+                best_s, best_key = s, key
+            if s < worst_s:
+                worst_s, worst_key = s, key
+
+        score_bar = bar(score.total_score, 100, 10)
+        best = LABELS.get(best_key, "?")
+        worst = LABELS.get(worst_key, "?")
+
         return (
-            f"🧠 *{score.total_score:.0f}/100* {grade}\n"
-            f"   ✅ Meilleur: {labels.get(best_key, '?')} ({best_score:.0f})\n"
-            f"   ⚠️ Plus faible: {labels.get(worst_key, '?')} ({worst_score:.0f})"
+            f"🧠 {score_bar} *{score.total_score:.0f}/100* {grade}\n"
+            f"  ✅ Fort: {best} ({best_s:.0f}) | ⚠️ Faible: {worst} ({worst_s:.0f})"
         )

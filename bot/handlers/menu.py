@@ -41,14 +41,32 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             f"{user.paper_initial_balance:.2f} USDC\n"
         )
 
+    # V3: Quick stats line (non-blocking, uses cached data if available)
+    trades_info = ""
+    try:
+        from bot.models.trade import Trade, TradeStatus
+        from sqlalchemy import select, func, and_
+        # We can't do async here (sync function), so just count from eagerly loaded trades
+        trade_count = len(user.trades) if user.trades else 0
+        if trade_count > 0:
+            filled = [t for t in user.trades if t.status == TradeStatus.FILLED]
+            settled = [t for t in filled if t.is_settled]
+            total_pnl = sum(t.settlement_pnl or 0 for t in settled)
+            pnl_sign = "+" if total_pnl >= 0 else ""
+            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+            open_count = len([t for t in filled if not t.is_settled])
+            trades_info = f"{pnl_emoji} {open_count} pos. ouvertes | PNL: *{pnl_sign}${total_pnl:.2f}*\n"
+    except Exception:
+        pass
+
     text = (
-        f"**WENPOLYMARKET** — Copy-Trading Polymarket\n"
+        f"**WENPOLYMARKET V3**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Bonjour **{tg_user.first_name}** !\n\n"
-        f"📬 Wallet : {wallet_short}\n"
-        f"🎛️ {status} • {mode}\n"
-        f"{paper_line}"
+        f"📬 {wallet_short} | {status} | {mode}\n"
         f"👥 {traders_count} trader(s) suivi(s)\n"
+        f"{paper_line}"
+        f"{trades_info}"
     )
 
     if not user.wallet_address:
@@ -336,48 +354,43 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if isinstance(res, tuple):
             current_prices[res[0]] = res[1]
 
-    lines = [
-        "📊 **POSITIONS EN COURS**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "_Positions = paris achetés et toujours ouverts_\n"
-        "_sur Polymarket (pas encore vendus/résolus)._\n"
-    ]
+    from bot.utils.formatting import (
+        header, fmt_usd, fmt_pnl, badge_position_status, time_ago,
+        short_wallet as sw, bar, SEP,
+    )
+
     total_invested = 0.0
     total_current = 0.0
 
+    # Classify trades
+    open_list = []
+    settled_list = []
+
     for t in trades:
         q = t.market_question or t.market_id
-        if len(q) > 45:
-            q = q[:42] + "..."
+        if len(q) > 40:
+            q = q[:37] + "..."
 
-        paper = " 📝" if t.is_paper else ""
-
-        # Time
-        if t.created_at:
-            time_str = t.created_at.strftime("%d/%m %H:%M")
-        else:
-            time_str = "?"
-
-        # PNL calculation
         entry_price = t.price
         invested = t.net_amount_usdc
         shares = t.shares if t.shares else (invested / entry_price if entry_price > 0 else 0)
+        paper = " 📝" if t.is_paper else ""
+        trader_short = sw(t.master_wallet) if t.master_wallet else ""
+        opened = time_ago(t.created_at) if t.created_at else "?"
 
         if t.is_settled and t.settlement_pnl is not None:
-            # Settled — show final result
             pnl_usdc = t.settlement_pnl
-            won = pnl_usdc >= 0
             payout = invested + pnl_usdc
             total_invested += invested
             total_current += payout
-            result_str = "GAGNÉ ✅" if won else "PERDU ❌"
+            emoji = "🏆" if pnl_usdc >= 0 else "💔"
             outcome = t.market_outcome or "?"
-            pnl_str = (
-                f"🏆 {result_str} ({outcome}) • "
-                f"P&L: {pnl_usdc:+.2f} USDC"
+            settled_list.append(
+                f"{emoji} _{q}_{paper}\n"
+                f"  {outcome} | {fmt_usd(invested)} → {fmt_usd(payout)} | "
+                f"*{'+' if pnl_usdc >= 0 else ''}{fmt_usd(pnl_usdc)}*"
             )
         else:
-            # Open position — fetch live price
             cur_price = current_prices.get(t.token_id, 0)
             current_value = shares * cur_price if cur_price > 0 else 0
             pnl_usdc = current_value - invested
@@ -385,28 +398,37 @@ async def menu_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             total_invested += invested
             total_current += current_value if cur_price > 0 else invested
 
+            badge = badge_position_status(pnl_pct) if cur_price > 0 else "⏳"
             if cur_price > 0:
-                pnl_emoji = "📈" if pnl_usdc >= 0 else "📉"
-                pnl_str = f"{pnl_emoji} {pnl_usdc:+.2f} USDC ({pnl_pct:+.1f}%) • now: {cur_price:.2f}"
+                pnl_line = fmt_pnl(pnl_usdc, pnl_pct)
+                price_line = f"${entry_price:.3f} → ${cur_price:.3f}"
             else:
-                pnl_str = f"⏳ En attente de résolution"
+                pnl_line = "⏳ en attente"
+                price_line = f"${entry_price:.3f}"
 
-        lines.append(
-            f"{'🟢' if t.side.value == 'buy' else '🔴'} **{q}**{paper}\n"
-            f"   🕐 {time_str} | Entry: {entry_price:.2f}\n"
-            f"   💵 {invested:.2f} USDC | {shares:.1f} shares\n"
-            f"   {pnl_str}\n"
-        )
+            open_list.append(
+                f"{badge} _{q}_{paper}\n"
+                f"  {price_line} | {fmt_usd(invested)} | {shares:.1f}sh\n"
+                f"  {pnl_line} | {opened}"
+                + (f" | `{trader_short}`" if trader_short else "")
+            )
 
-    # Total PNL
+    # Build output
     total_pnl = total_current - total_invested
     total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
-    total_sign = "+" if total_pnl >= 0 else ""
-    lines.append(
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"💼 **Total investi** : {total_invested:.2f} USDC\n"
-        f"📊 **PNL total** : {total_sign}{total_pnl:.2f} USDC ({total_sign}{total_pnl_pct:.1f}%)"
-    )
+
+    lines = [
+        f"{header('POSITIONS', '📊')}\n",
+        f"📦 *{len(open_list)}* ouvertes | {fmt_usd(total_invested)} investi | {fmt_pnl(total_pnl, total_pnl_pct)}\n",
+    ]
+
+    if open_list:
+        lines.append("*── Ouvertes ──*\n")
+        lines.extend(open_list)
+
+    if settled_list:
+        lines.append(f"\n*── Résolues récentes ──*\n")
+        lines.extend(settled_list[:5])
 
     text = "\n".join(lines)
 
@@ -437,33 +459,61 @@ async def menu_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         trades = result.scalars().all()
 
+    from bot.utils.formatting import header, fmt_usd, fmt_pnl_compact, bar_bicolor
+
     if not trades:
         text = (
-            "📜 **HISTORIQUE**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "_Historique = tous les trades passés (achats,_\n"
-            "_ventes, réussis, échoués, annulés)._\n\n"
-            "Aucun trade enregistré."
+            f"{header('HISTORIQUE', '📜')}\n\n"
+            "Aucun trade enregistré.\n\n"
+            "_Les trades apparaitront ici dès que le bot copiera._"
         )
     else:
         status_emoji = {"filled": "✅", "failed": "❌", "cancelled": "🚫", "pending": "🟡", "executing": "🔄"}
+
+        # Stats header
+        filled = [t for t in trades if t.status.value == "filled"]
+        wins = [t for t in filled if t.is_settled and (t.settlement_pnl or 0) > 0]
+        losses = [t for t in filled if t.is_settled and (t.settlement_pnl or 0) < 0]
+        total_vol = sum(t.net_amount_usdc for t in trades)
+        total_fees = sum(t.fee_amount_usdc for t in trades if t.fee_amount_usdc)
+        total_pnl = sum(t.settlement_pnl or 0 for t in filled if t.is_settled)
+        wr = (len(wins) / (len(wins) + len(losses)) * 100) if (len(wins) + len(losses)) > 0 else 0
+
+        wr_bar = bar_bicolor(len(wins), len(losses), len(wins) + len(losses), 8)
+
         lines = [
-            "📜 **HISTORIQUE**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "_Historique = tous les trades passés (achats,_\n"
-            "_ventes, réussis, échoués, annulés)._\n"
+            f"{header('HISTORIQUE', '📜')}\n",
+            f"📊 *{len(trades)}* trades | {fmt_usd(total_vol)} vol | Fees: {fmt_usd(total_fees)}",
         ]
+        if len(wins) + len(losses) > 0:
+            lines.append(
+                f"{wr_bar} *{wr:.0f}%* WR ({len(wins)}W/{len(losses)}L) | "
+                f"PNL: *{'+' if total_pnl >= 0 else ''}{fmt_usd(total_pnl)}*\n"
+            )
+        else:
+            lines.append("")
+
         for t in trades:
             emoji = status_emoji.get(t.status.value, "❓")
             q = t.market_question or t.market_id
-            if len(q) > 35:
-                q = q[:32] + "..."
+            if len(q) > 32:
+                q = q[:29] + "..."
             date_str = t.created_at.strftime("%d/%m %H:%M") if t.created_at else "?"
             paper = " 📝" if t.is_paper else ""
-            lines.append(f"{emoji} {date_str} | {t.net_amount_usdc:.2f} USDC{paper}\n   {q}\n")
+
+            # PNL if settled
+            pnl_str = ""
+            if t.is_settled and t.settlement_pnl is not None:
+                pnl_str = f" | *{'+' if t.settlement_pnl >= 0 else ''}{fmt_usd(t.settlement_pnl)}*"
+
+            lines.append(f"{emoji} {date_str} | {fmt_usd(t.net_amount_usdc)}{paper}{pnl_str}\n  _{q}_")
+
         text = "\n".join(lines)
 
-    keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
+    keyboard = [
+        [InlineKeyboardButton("🔄 Rafraîchir", callback_data="menu_history")],
+        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+    ]
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )

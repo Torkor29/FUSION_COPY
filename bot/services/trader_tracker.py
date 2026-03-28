@@ -269,32 +269,41 @@ class TraderTracker:
             }
 
     async def format_trader_report(self, wallet: str) -> str:
-        """Format a trader performance report for Telegram."""
+        """Format a trader performance report — visuel avec barres et badges."""
+        from bot.utils.formatting import (
+            short_wallet as sw, badge_trader_status, fmt_usd, fmt_streak,
+            bar, fmt_pnl_compact, SEP_LIGHT,
+        )
+
         stats_all = self._stats_cache.get(wallet) or await self.recalculate_stats(
             wallet
         )
         s7 = stats_all.get("7d")
         s30 = stats_all.get("30d")
 
-        short_wallet = f"{wallet[:6]}...{wallet[-4:]}"
-        lines = [f"*👤 Trader Report: `{short_wallet}`*\n"]
+        addr = sw(wallet)
+        badge = badge_trader_status(
+            s7.win_rate if s7 else 0,
+            s7.trade_count if s7 else 0,
+        )
+        streak = fmt_streak(s7.current_streak) if s7 else "0"
 
-        if s7:
-            streak_emoji = "🔥" if s7.is_hot else ("🥶" if s7.is_cold else "➡️")
-            lines.append(f"*7 Days:* {streak_emoji}")
-            lines.append(f"  Win Rate: *{s7.win_rate:.0f}%* ({s7.trade_count} trades)")
-            lines.append(f"  PNL: *${s7.total_pnl:+,.2f}*")
-            lines.append(f"  Avg Return: *{s7.avg_return_pct:+.1f}%*")
-            lines.append(f"  Streak: *{s7.current_streak:+d}*")
+        lines = [f"👤 `{addr}` {badge} | Streak: {streak}"]
+
+        if s7 and s7.trade_count > 0:
+            wr_bar = bar(s7.win_rate, 100, 10)
+            lines.append(f"  *7j:* {wr_bar} {s7.win_rate:.0f}% ({s7.trade_count}t)")
+            lines.append(f"  PNL: *{fmt_usd(s7.total_pnl)}* | Moy: {fmt_pnl_compact(s7.avg_return_pct)}")
             if s7.best_category:
-                lines.append(f"  Best: {s7.best_category}")
+                lines.append(f"  ✅ Fort: _{s7.best_category[:25]}_")
             if s7.worst_category:
-                lines.append(f"  Worst: {s7.worst_category}")
+                lines.append(f"  ❌ Faible: _{s7.worst_category[:25]}_")
+        else:
+            lines.append("  _7j: pas assez de données_")
 
-        if s30:
-            lines.append(f"\n*30 Days:*")
-            lines.append(f"  Win Rate: *{s30.win_rate:.0f}%* ({s30.trade_count} trades)")
-            lines.append(f"  PNL: *${s30.total_pnl:+,.2f}*")
+        if s30 and s30.trade_count > 0:
+            wr_bar = bar(s30.win_rate, 100, 10)
+            lines.append(f"  *30j:* {wr_bar} {s30.win_rate:.0f}% ({s30.trade_count}t) | {fmt_usd(s30.total_pnl)}")
 
         return "\n".join(lines)
 

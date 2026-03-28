@@ -155,39 +155,48 @@ class PortfolioManager:
         }
 
     async def format_portfolio_report(self, user_id: int) -> str:
-        """Format a portfolio summary for Telegram."""
+        """Format portfolio summary — visuel avec barres et badges."""
+        from bot.utils.formatting import (
+            header, bar, fmt_usd, fmt_pnl, badge_position_status,
+            bar_bicolor, SEP_LIGHT,
+        )
+
         summary = await self.get_portfolio_summary(user_id)
 
         if summary["total_positions"] == 0:
-            return "💼 *Portfolio*\n\nNo open positions."
+            return (
+                f"{header('PORTFOLIO', '💼')}\n\n"
+                "Aucune position ouverte.\n\n"
+                "_Les positions apparaitront ici dès qu'un trade sera copié._"
+            )
 
+        total_pos = summary["total_positions"]
+        total_val = summary["total_value_usdc"]
         pnl = summary["unrealized_pnl_pct"]
-        pnl_emoji = "📈" if pnl >= 0 else "📉"
+        pnl_line = fmt_pnl(pnl_pct=pnl)
 
         lines = [
-            "💼 *Portfolio Summary*\n",
-            f"Positions: *{summary['total_positions']}*",
-            f"Value: *${summary['total_value_usdc']:,.2f}*",
-            f"Unrealized PNL: {pnl_emoji} *{pnl:+.1f}%*",
-            "",
+            f"{header('PORTFOLIO', '💼')}\n",
+            f"📦 *{total_pos}* positions | {fmt_usd(total_val)} | {pnl_line}\n",
         ]
 
-        # Category exposure
-        if summary["category_exposure"]:
-            lines.append("*Category Exposure:*")
-            for cat, pct in summary["category_exposure"].items():
-                bar_len = int(pct / 100 * 10)
-                bar = "█" * bar_len + "░" * (10 - bar_len)
-                lines.append(f"  {cat}: {bar} {pct:.0f}%")
+        # Category exposure with bars
+        cat_exp = summary.get("category_exposure", {})
+        if cat_exp:
+            lines.append(f"*Exposition par catégorie:*")
+            for cat, pct in cat_exp.items():
+                cat_bar = bar(pct, 100, 15)
+                lines.append(f"  {cat_bar} {cat} *{pct:.0f}%*")
             lines.append("")
 
-        # Direction split
-        ds = summary["direction_split"]
-        lines.append(
-            f"*Direction:* YES {ds.get('YES', 0):.0f}% / NO {ds.get('NO', 0):.0f}%"
-        )
+        # Direction split with bicolor bar
+        ds = summary.get("direction_split", {})
+        yes_pct = ds.get("YES", 50)
+        no_pct = ds.get("NO", 50)
+        dir_bar = bar_bicolor(yes_pct, no_pct, 100, 10)
+        lines.append(f"*Direction:* {dir_bar} YES {yes_pct:.0f}% / NO {no_pct:.0f}%\n")
 
-        # Top/bottom positions by PNL
+        # Positions sorted by PNL
         positions = sorted(
             summary["positions"],
             key=lambda p: p.unrealized_pnl_pct,
@@ -195,20 +204,17 @@ class PortfolioManager:
         )
 
         if positions:
-            lines.append("\n*Top Positions:*")
-            for p in positions[:3]:
-                name = (p.market_question or p.market_id)[:30]
+            lines.append(f"*Positions (par PNL):*")
+            for p in positions[:5]:
+                name = (p.market_question or p.market_id)[:28]
                 pnl_val = p.unrealized_pnl_pct
-                emoji = "🟢" if pnl_val >= 0 else "🔴"
-                lines.append(f"  {emoji} {name}: {pnl_val:+.1f}%")
+                badge = badge_position_status(pnl_val)
+                sign = "+" if pnl_val >= 0 else ""
+                lines.append(f"  {badge} _{name}_ *{sign}{pnl_val:.1f}%*")
 
-            if len(positions) > 3:
-                lines.append("\n*Worst Positions:*")
-                for p in positions[-2:]:
-                    name = (p.market_question or p.market_id)[:30]
-                    pnl_val = p.unrealized_pnl_pct
-                    emoji = "🟢" if pnl_val >= 0 else "🔴"
-                    lines.append(f"  {emoji} {name}: {pnl_val:+.1f}%")
+            if len(positions) > 5:
+                remaining = len(positions) - 5
+                lines.append(f"  _... et {remaining} autre(s)_")
 
         return "\n".join(lines)
 
