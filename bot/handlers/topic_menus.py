@@ -37,6 +37,8 @@ async def detect_topic(user_id: int, group_id: int, thread_id: Optional[int]) ->
     """Return which topic a message was sent in.
 
     Returns one of: "signals" | "traders" | "portfolio" | "alerts" | "admin" | "general"
+
+    Queries by group_id only (unique) — user_id may be NULL on older configs.
     """
     if not thread_id:
         return "general"
@@ -45,18 +47,30 @@ async def detect_topic(user_id: int, group_id: int, thread_id: Optional[int]) ->
         from sqlalchemy import select
         async with async_session() as session:
             config = (await session.execute(
-                select(GroupConfig).where(
-                    GroupConfig.user_id == user_id,
-                    GroupConfig.group_id == group_id,
-                )
+                select(GroupConfig).where(GroupConfig.group_id == group_id)
             )).scalar_one_or_none()
 
-        if not config:
-            return "general"
+            if not config:
+                logger.debug("detect_topic: no GroupConfig for group_id=%s", group_id)
+                return "general"
 
-        for name, tid in config.topics_dict.items():
+            topics = {
+                "signals":   config.topic_signals_id,
+                "traders":   config.topic_traders_id,
+                "portfolio": config.topic_portfolio_id,
+                "alerts":    config.topic_alerts_id,
+                "admin":     config.topic_admin_id,
+            }
+
+        logger.debug(
+            "detect_topic: group=%s thread=%s topics=%s",
+            group_id, thread_id, topics,
+        )
+
+        for name, tid in topics.items():
             if tid and tid == thread_id:
-                return name  # "signals", "traders", "portfolio", "alerts", "admin"
+                return name
+
     except Exception as e:
         logger.debug("detect_topic error: %s", e)
 
@@ -79,28 +93,46 @@ async def show_topic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     group_id = update.effective_chat.id
     thread_id = getattr(update.effective_message, "message_thread_id", None)
 
-    async with async_session() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if not user:
-            return False
-        user_settings = await get_or_create_settings(session, user)
+    # Load user + settings inside session, copy all attributes needed before closing
+    user_id_db = None
+    user_obj = None
+    us_obj = None
 
-    topic = await detect_topic(user.id, group_id, thread_id)
+    try:
+        async with async_session() as session:
+            user_obj = await get_user_by_telegram_id(session, tg_user.id)
+            if not user_obj:
+                return False
+            us_obj = await get_or_create_settings(session, user_obj)
+
+            # Force-load all attributes while session is open
+            user_id_db = user_obj.id
+            _ = user_obj.is_active
+            _ = user_obj.is_paused
+            _ = user_obj.paper_trading
+            _ = user_obj.wallet_address
+            _ = user_obj.paper_balance
+    except Exception as e:
+        logger.debug("show_topic_menu user load error: %s", e)
+        return False
+
+    topic = await detect_topic(user_id_db, group_id, thread_id)
+    logger.debug("show_topic_menu: topic=%s thread=%s group=%s", topic, thread_id, group_id)
 
     if topic == "signals":
-        await _show_signals_menu(update, user, user_settings)
+        await _show_signals_menu(update, user_obj, us_obj)
         return True
     elif topic == "traders":
-        await _show_traders_menu(update, user, user_settings)
+        await _show_traders_menu(update, user_obj, us_obj)
         return True
     elif topic == "portfolio":
-        await _show_portfolio_menu(update, user, user_settings)
+        await _show_portfolio_menu(update, user_obj, us_obj)
         return True
     elif topic == "alerts":
-        await _show_alerts_menu(update, user, user_settings)
+        await _show_alerts_menu(update, user_obj, us_obj)
         return True
     elif topic == "admin":
-        await _show_admin_menu(update, user, user_settings)
+        await _show_admin_menu(update, user_obj, us_obj)
         return True
 
     return False  # "general" → caller shows default menu
