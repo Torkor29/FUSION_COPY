@@ -84,6 +84,7 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         ],
         [
             InlineKeyboardButton("🔍 Scanner traders", callback_data="menu_scanner"),
+            InlineKeyboardButton("📈 Analytics V3", callback_data="v3_analytics"),
         ],
     ])
 
@@ -649,7 +650,7 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
 
     # Page 1 by default, page 2 if callback says so
-    page = 2 if query.data == "menu_help_2" else 1
+    page = 3 if query.data == "menu_help_3" else (2 if query.data == "menu_help_2" else 1)
 
     if page == 1:
         text = (
@@ -679,12 +680,12 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "  limites de trade, délai de copie.\n"
         )
         keyboard = [
-            [InlineKeyboardButton("▶️ Page 2/2", callback_data="menu_help_2")],
+            [InlineKeyboardButton("▶️ Page 2/3", callback_data="menu_help_2")],
             [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
         ]
-    else:
+    elif page == 2:
         text = (
-            "❓ **GUIDE COMPLET — PAGE 2/2**\n"
+            "❓ **GUIDE COMPLET — PAGE 2/3**\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "**📡 Activité traders** (Dashboard)\n"
             "  Ce que vos traders font EN DIRECT sur\n"
@@ -716,7 +717,54 @@ async def menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "⚡ Copie en < 15 secondes après le trader"
         )
         keyboard = [
-            [InlineKeyboardButton("⬅️ Page 1/2", callback_data="menu_help")],
+            [
+                InlineKeyboardButton("⬅️ Page 1/3", callback_data="menu_help"),
+                InlineKeyboardButton("▶️ Page 3/3", callback_data="menu_help_3"),
+            ],
+            [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        ]
+    else:
+        text = (
+            "❓ **GUIDE V3 — SMART ANALYSIS (3/3)**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "**🧠 Signal Scoring** (automatique)\n"
+            "  Chaque signal reçoit un score 0-100 basé sur :\n"
+            "  • Spread bid-ask (serré = bon)\n"
+            "  • Liquidité du marché (volume 24h)\n"
+            "  • Conviction du trader (taille vs portfolio)\n"
+            "  • Forme du trader (win rate 7 jours)\n"
+            "  • Timing (distance à l'expiry)\n"
+            "  • Consensus (d'autres traders font pareil)\n"
+            "  Réglable dans ⚙️ → 🧠 Smart Analysis\n\n"
+            "**🎯 Filtre Intelligent** (automatique)\n"
+            "  Bloque les mauvais trades :\n"
+            "  • Marchés coin-flip (prix ~$0.50)\n"
+            "  • Trader sans edge prouvé sur ce type\n"
+            "  • Trades à faible conviction (< 2% du portfolio)\n"
+            "  • Prix qui a trop bougé depuis le master\n\n"
+            "**📉 Gestion des positions** (actif)\n"
+            "  Le bot surveille vos positions toutes les 15s :\n"
+            "  • Trailing stop — suit le prix à la hausse\n"
+            "  • Time exit — sort les positions mortes\n"
+            "  • Scale-out — prend du profit partiellement\n"
+            "  Réglable dans ⚙️ → 📉 Gestion Positions\n\n"
+            "**📦 Portfolio & Risque** (automatique)\n"
+            "  Protège contre la surexposition :\n"
+            "  • Max positions simultanées\n"
+            "  • Max par catégorie (30% Crypto par défaut)\n"
+            "  • Biais directionnel (pas tout en YES)\n"
+            "  Réglable dans ⚙️ → 📦 Portfolio & Risque\n\n"
+            "**📈 Analytics** (bouton menu principal)\n"
+            "  Tableau de bord avec performances traders,\n"
+            "  portfolio, historique signaux, stats filtres.\n\n"
+            "**📬 Topics Telegram** (automatique)\n"
+            "  Ajoutez le bot comme admin dans un groupe forum.\n"
+            "  Il crée automatiquement 5 topics :\n"
+            "  📊 Signaux | 👤 Traders | 💼 Portfolio\n"
+            "  🚨 Alertes | ⚙️ Admin"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Page 2/3", callback_data="menu_help_2")],
             [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
         ]
 
@@ -3579,6 +3627,7 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(menu_history, pattern="^menu_history$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help$"),
         CallbackQueryHandler(menu_help, pattern="^menu_help_2$"),
+        CallbackQueryHandler(menu_help, pattern="^menu_help_3$"),
         CallbackQueryHandler(menu_dashboard, pattern="^menu_dashboard$"),
         CallbackQueryHandler(menu_recap, pattern="^menu_recap$"),
         CallbackQueryHandler(menu_switch_wallet, pattern="^menu_switch_wallet$"),

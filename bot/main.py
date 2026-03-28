@@ -1,4 +1,4 @@
-"""Main entry point for the WENPOLYMARKET copytrading bot."""
+"""Main entry point for the WENPOLYMARKET V3 Smart CopyTrading Bot."""
 
 import asyncio
 import logging
@@ -17,6 +17,8 @@ from bot.handlers.bridge import get_bridge_handler, get_bridge_callbacks
 from bot.handlers.deposit import get_deposit_handlers
 from bot.handlers.menu import get_menu_handlers
 from bot.handlers.withdraw import get_withdraw_handler
+from bot.handlers.analytics import get_analytics_handlers
+from bot.handlers.group_setup import get_group_setup_handler
 from bot.services.monitor import MultiMasterMonitor
 from bot.services.clob_ws_monitor import ClobWsMonitor, RawWsEvent
 from bot.services.copytrade import CopyTradeEngine
@@ -27,6 +29,15 @@ from bot.services.scheduler import (
     health_check,
     settle_trades,
 )
+
+# V3 — Smart Analysis imports
+from bot.services.topic_router import TopicRouter
+from bot.services.signal_scorer import SignalScorer
+from bot.services.trader_tracker import TraderTracker
+from bot.services.market_intel import MarketIntelService
+from bot.services.position_manager import PositionManager
+from bot.services.portfolio_manager import PortfolioManager
+from bot.services.smart_filter import SmartFilter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,10 +68,24 @@ def build_application() -> Application:
     for handler in get_admin_handlers():
         app.add_handler(handler)
 
+    # V3 — Analytics handlers (/analytics, trader stats, portfolio, etc.)
+    for handler in get_analytics_handlers():
+        app.add_handler(handler)
+
+    # V3 — Auto-setup: creates forum topics when bot is added as admin to a group
+    app.add_handler(get_group_setup_handler())
+
     return app
 
 
-def setup_scheduler(monitor: MultiMasterMonitor, bot=None) -> AsyncIOScheduler:
+def setup_scheduler(
+    monitor: MultiMasterMonitor,
+    bot=None,
+    trader_tracker: TraderTracker = None,
+    position_manager: PositionManager = None,
+    portfolio_manager: PortfolioManager = None,
+    topic_router: TopicRouter = None,
+) -> AsyncIOScheduler:
     """Configure periodic background tasks."""
     scheduler = AsyncIOScheduler()
 
@@ -83,8 +108,13 @@ def setup_scheduler(monitor: MultiMasterMonitor, bot=None) -> AsyncIOScheduler:
     )
 
     # Settle resolved trades (paper + live) every 2 minutes
+    # V3: passes topic_router + trader_tracker for routing + performance tracking
     scheduler.add_job(
-        lambda: settle_trades(bot=bot),
+        lambda: settle_trades(
+            bot=bot,
+            topic_router=topic_router,
+            trader_tracker=trader_tracker,
+        ),
         "interval", minutes=2,
         id="settle_trades",
     )
@@ -96,12 +126,82 @@ def setup_scheduler(monitor: MultiMasterMonitor, bot=None) -> AsyncIOScheduler:
         id="refresh_watched_wallets",
     )
 
+    # ── V3 Scheduled Jobs ──────────────────────────────────────
+
+    # Recalculate trader stats every 15 minutes
+    if trader_tracker:
+        async def refresh_all_trader_stats():
+            """Recalculate stats for all watched wallets."""
+            try:
+                for wallet in monitor.watched_wallets:
+                    await trader_tracker.recalculate_stats(wallet)
+                    if await trader_tracker.check_auto_pause(wallet):
+                        if topic_router:
+                            short = f"{wallet[:6]}...{wallet[-4:]}"
+                            await topic_router.send_alert(
+                                f"⚠️ Trader `{short}` auto-paused: "
+                                f"win rate below threshold"
+                            )
+                logger.info(
+                    "Trader stats refreshed for %d wallets",
+                    len(monitor.watched_wallets),
+                )
+            except Exception as e:
+                logger.error("Trader stats refresh failed: %s", e)
+
+        scheduler.add_job(
+            refresh_all_trader_stats,
+            "interval", minutes=15,
+            id="refresh_trader_stats",
+        )
+
+    # Check time-based exits every 5 minutes
+    if position_manager:
+        async def check_time_exits():
+            try:
+                await position_manager.check_time_exits(time_exit_hours=24)
+            except Exception as e:
+                logger.error("Time exit check failed: %s", e)
+
+        scheduler.add_job(
+            check_time_exits,
+            "interval", minutes=5,
+            id="check_time_exits",
+        )
+
+    # Daily portfolio report at 8:00 UTC
+    if portfolio_manager and topic_router:
+        async def daily_portfolio_report():
+            try:
+                from bot.db.session import async_session
+                from bot.models.user import User
+                from sqlalchemy import select
+
+                async with async_session() as session:
+                    users = (
+                        await session.execute(
+                            select(User).where(User.is_active == True)  # noqa: E712
+                        )
+                    ).scalars().all()
+
+                for user in users:
+                    report = await portfolio_manager.format_portfolio_report(user.id)
+                    await topic_router.send_portfolio(report)
+            except Exception as e:
+                logger.error("Daily portfolio report failed: %s", e)
+
+        scheduler.add_job(
+            daily_portfolio_report,
+            "cron", hour=8, minute=0,
+            id="daily_portfolio_report",
+        )
+
     return scheduler
 
 
 async def main() -> None:
     """Initialize database and start the bot."""
-    logger.info("Starting WENPOLYMARKET CopyTrading Bot...")
+    logger.info("Starting WENPOLYMARKET V3 Smart CopyTrading Bot...")
 
     await init_db()
     logger.info("Database initialized.")
@@ -111,7 +211,70 @@ async def main() -> None:
     app = build_application()
     logger.info("Bot handlers registered.")
 
-    engine = CopyTradeEngine(telegram_bot=app.bot)
+    # ── V3: Initialize Smart Analysis services ──────────────────
+    from bot.services.polymarket import polymarket_client
+
+    # Topic Router (Telegram group topics)
+    # Loads from .env first, then tries DB (auto-setup config)
+    topic_router = TopicRouter(bot=app.bot)
+    await topic_router.try_load_from_db()  # Override .env with DB if available
+
+    # Trader performance tracker
+    trader_tracker = TraderTracker(topic_router=topic_router)
+
+    # Market intelligence
+    market_intel = MarketIntelService(polymarket_client=polymarket_client)
+
+    # Position manager (active SL/TP enforcement)
+    position_manager = PositionManager(
+        polymarket_client=polymarket_client,
+        topic_router=topic_router,
+        check_interval=15,
+    )
+
+    # Portfolio manager (risk controls)
+    portfolio_manager = PortfolioManager(
+        position_manager=position_manager,
+        market_intel_service=market_intel,
+    )
+
+    # Signal scorer
+    signal_scorer = SignalScorer(
+        polymarket_client=polymarket_client,
+        trader_tracker=trader_tracker,
+        market_intel_service=market_intel,
+    )
+
+    # Smart filter
+    smart_filter = SmartFilter(
+        market_intel_service=market_intel,
+        trader_tracker=trader_tracker,
+        polymarket_client=polymarket_client,
+    )
+
+    # Create CopyTradeEngine with all V3 services injected
+    engine = CopyTradeEngine(
+        telegram_bot=app.bot,
+        signal_scorer=signal_scorer,
+        smart_filter=smart_filter,
+        portfolio_manager=portfolio_manager,
+        position_manager=position_manager,
+        trader_tracker=trader_tracker,
+        topic_router=topic_router,
+    )
+
+    # Wire position manager exit callback to engine
+    async def on_position_exit(user_id, position, reason):
+        """Called by PositionManager when SL/TP triggers an exit."""
+        logger.info(
+            "Position exit callback: user=%d reason=%s market=%s",
+            user_id, reason, position.market_id[:20],
+        )
+        # The actual sell is handled by PositionManager's alert
+        # In a full implementation, this would create a SELL signal
+        # and push it through the engine
+
+    position_manager.set_exit_callback(on_position_exit)
 
     # Monitor Data API (positions) — poll every N seconds
     monitor = MultiMasterMonitor(
@@ -119,21 +282,21 @@ async def main() -> None:
         on_signal=engine.handle_signal,
     )
 
-    # Callback WebSocket : sur chaque trade CLOB, on déclenche un check
-    # immédiat pour réduire la latence de détection à <1s.
+    # Give signal scorer access to monitor for consensus scoring
+    signal_scorer._monitor = monitor
 
+    # Callback WebSocket: on each CLOB trade, trigger immediate check
     async def handle_ws_event(evt: RawWsEvent) -> None:
         if evt.type in ("last_trade_price", "trade"):
             await monitor.fast_check_all_wallets()
 
-    # Monitor WebSocket CLOB — temps réel
+    # Monitor WebSocket CLOB — real-time
     clob_ws_monitor = ClobWsMonitor(on_event=handle_ws_event)
 
     # Periodic job: sync WS subscriptions with tracked positions
     async def sync_ws_subscriptions():
         """Gather all token_ids from followed wallets' positions for WS."""
         try:
-            from bot.services.polymarket import polymarket_client
             token_ids: set[str] = set()
             for wallet in monitor.watched_wallets:
                 positions = await polymarket_client.get_positions_by_address(wallet)
@@ -145,7 +308,14 @@ async def main() -> None:
         except Exception as e:
             logger.warning(f"WS subscription sync failed: {e}")
 
-    scheduler = setup_scheduler(monitor, bot=app.bot)
+    scheduler = setup_scheduler(
+        monitor,
+        bot=app.bot,
+        trader_tracker=trader_tracker,
+        position_manager=position_manager,
+        portfolio_manager=portfolio_manager,
+        topic_router=topic_router,
+    )
 
     # Sync WS subscriptions every 2 minutes
     scheduler.add_job(
@@ -170,8 +340,25 @@ async def main() -> None:
 
     # Start WebSocket + initial token subscription
     await clob_ws_monitor.start()
-    # Initial subscription sync (don't block startup)
     asyncio.create_task(sync_ws_subscriptions())
+
+    # V3: Start position manager monitoring loop
+    await position_manager.start()
+    logger.info("Position manager started (checking every 15s).")
+
+    # V3: Startup notification
+    if topic_router.is_enabled:
+        await topic_router.send_admin(
+            "🟢 *Bot V3 Started*\n\n"
+            f"Wallets watched: {len(monitor.watched_wallets)}\n"
+            "Smart Analysis: ✅ Active\n"
+            "Signal Scoring: ✅\n"
+            "Trader Tracker: ✅\n"
+            "Position Manager: ✅\n"
+            "Portfolio Manager: ✅\n"
+            "Smart Filter: ✅"
+        )
+    logger.info("V3 Smart Analysis services initialized.")
 
     # Start web dashboard (FastAPI) if enabled
     dashboard_server = None
@@ -189,7 +376,7 @@ async def main() -> None:
         asyncio.create_task(dashboard_server.serve())
         logger.info(f"Dashboard started on http://0.0.0.0:{settings.dashboard_port}")
 
-    logger.info("Bot is fully running. Press Ctrl+C to stop.")
+    logger.info("Bot V3 is fully running. Press Ctrl+C to stop.")
 
     stop_event = asyncio.Event()
     try:
@@ -201,10 +388,9 @@ async def main() -> None:
         if dashboard_server:
             dashboard_server.should_exit = True
         scheduler.shutdown(wait=False)
+        await position_manager.stop()
         await monitor.stop()
         await clob_ws_monitor.stop()
-        # Close persistent HTTP connections
-        from bot.services.polymarket import polymarket_client
         await polymarket_client.close()
         await app.updater.stop()
         await app.stop()

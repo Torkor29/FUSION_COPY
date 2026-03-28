@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     # URL d'une bannière (logo) pour le message d'accueil Telegram
     welcome_banner_url: str = ""
 
+    # V3 — Telegram Group with Topics
+    # Create a Forum-enabled group, add the bot as admin, then fill these IDs.
+    # Leave empty to keep DM-only mode (backwards compatible).
+    group_chat_id: str = ""          # Telegram group ID (e.g. -100xxxxxxxxxx)
+    topic_signals_id: int = 0        # Thread ID for 📊 Signals topic
+    topic_traders_id: int = 0        # Thread ID for 👤 Traders topic
+    topic_portfolio_id: int = 0      # Thread ID for 💼 Portfolio topic
+    topic_alerts_id: int = 0         # Thread ID for 🚨 Alerts topic
+    topic_admin_id: int = 0          # Thread ID for ⚙️ Admin topic
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

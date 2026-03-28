@@ -33,18 +33,23 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     ]
 
     welcome_text = (
-        "👋 **Bienvenue sur WENPOLYMARKET**\n\n"
-        "Bot Telegram de **copy-trading Polymarket** : vous suivez automatiquement les "
-        "meilleurs traders depuis un wallet dédié.\n\n"
-        "✨ **Fonctionnalités**\n"
-        "• Copy-trading automatique des traders que vous choisissez\n"
-        "• Wallet Polygon dédié au copy-trading\n"
-        "• Suivi des soldes, positions et historique depuis le menu\n\n"
+        "👋 **Bienvenue sur WENPOLYMARKET V3**\n\n"
+        "Bot Telegram de **copy-trading intelligent** Polymarket.\n"
+        "Ne copiez pas bêtement — copiez *malin*.\n\n"
+        "✨ **Copy-Trading**\n"
+        "• Copie auto des traders que vous choisissez\n"
+        "• Wallet Polygon dédié\n"
+        "• Suivi soldes, positions, historique\n\n"
+        "🧠 **Analyse V3** (ce qui nous rend unique)\n"
+        "• Score 0-100 pour chaque signal avant copie\n"
+        "• Filtre intelligent (coin-flip, conviction, edge)\n"
+        "• Trailing stop, sortie auto, prise de profit partielle\n"
+        "• Contrôle du risque portfolio (max positions, diversification)\n"
+        "• Analytics en temps réel par trader et catégorie\n\n"
         "🔐 **Sécurité**\n"
         "• Clés privées chiffrées AES-256-GCM\n"
-        "• Jamais stockées ni envoyées en clair\n\n"
-        "Cliquez sur « Accéder au menu principal » pour commencer, "
-        "configurer votre wallet et choisir vos traders à copier."
+        "• Mode Paper (simulation) activé par défaut\n\n"
+        "Cliquez ci-dessous pour commencer."
     )
 
     await send_with_banner(

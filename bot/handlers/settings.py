@@ -37,6 +37,20 @@ SETTING_LABELS = {
     "manual_confirmation": ("🔔 Confirmation manuelle", ""),
     "confirmation_threshold_usdc": ("🔔 Seuil confirmation", "USDC"),
     "auto_bridge_sol": ("🌉 Auto-bridge SOL", ""),
+    # ── V3 Smart Analysis ──
+    "min_signal_score": ("🎯 Score minimum", "/100"),
+    "cold_trader_threshold": ("🥶 Seuil trader froid", "%"),
+    "hot_streak_boost": ("🔥 Boost hot streak", "x"),
+    "trailing_stop_pct": ("📉 Trailing stop", "%"),
+    "time_exit_hours": ("⏰ Sortie temps", "h"),
+    "scale_out_pct": ("📊 Scale-out", "%"),
+    "max_positions": ("📦 Max positions", ""),
+    "max_category_exposure_pct": ("📂 Max par catégorie", "%"),
+    "max_direction_bias_pct": ("⚖️ Max biais direction", "%"),
+    "min_trader_winrate_for_type": ("📈 Win rate min trader", "%"),
+    "min_trader_trades_for_type": ("🔢 Trades min pour filtre", ""),
+    "min_conviction_pct": ("💪 Conviction min", "%"),
+    "max_price_drift_pct": ("📏 Drift prix max", "%"),
 }
 
 # Descriptions détaillées avec exemples pour chaque option
@@ -196,6 +210,209 @@ SETTING_DESCRIPTIONS = {
         "📊 Valeurs possibles : **1 — 365 jours**\n\n"
         "Envoyez le nombre de jours maximum :"
     ),
+    # ═══════════════════════════════════════════
+    # V3 — SMART ANALYSIS DESCRIPTIONS
+    # ═══════════════════════════════════════════
+    "min_signal_score": (
+        "🎯 **Score minimum pour copier**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Chaque signal reçoit un score de 0 à 100 basé sur 6 critères :\n"
+        "• Spread (bid-ask serré ?)\n"
+        "• Liquidité (volume du marché)\n"
+        "• Conviction (taille vs portfolio du trader)\n"
+        "• Forme du trader (win rate 7 jours)\n"
+        "• Timing (distance à l'expiry)\n"
+        "• Consensus (d'autres traders font pareil ?)\n\n"
+        "Seuls les signaux au-dessus de ce seuil sont copiés.\n\n"
+        "**Exemples :**\n"
+        "• 30 = permissif — copie la plupart\n"
+        "• 50 = modéré — filtre les mauvais\n"
+        "• 70 = strict — ne prend que le top\n\n"
+        "📊 Valeurs : **0 — 100**\n\n"
+        "Envoyez le score minimum :"
+    ),
+    "cold_trader_threshold": (
+        "🥶 **Seuil de win rate — trader froid**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Si un trader passe en-dessous de ce win rate sur 15+ trades, "
+        "il est automatiquement mis en pause.\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot recalcule les stats toutes les 15 min. Si le win rate "
+        "7 jours tombe sous ce seuil → plus aucun trade copié de ce "
+        "trader jusqu'à ce qu'il remonte.\n\n"
+        "**Exemple :**\n"
+        "Seuil = 40% → un trader à 35% de win rate est pausé\n\n"
+        "📊 Valeurs : **10 — 60 %**\n\n"
+        "Envoyez le seuil en % :"
+    ),
+    "hot_streak_boost": (
+        "🔥 **Boost de sizing — trader en forme**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Multiplicateur appliqué aux trades quand un trader est "
+        "en hot streak (win rate > 65% sur 10+ trades).\n\n"
+        "**Comment ça marche :**\n"
+        "Un trader performant mérite plus de capital. Ce multiplicateur "
+        "augmente automatiquement la taille des trades copiés.\n\n"
+        "**Exemples :**\n"
+        "• 1.0x = pas de boost (même taille)\n"
+        "• 1.5x = 50% de plus quand le trader est chaud\n"
+        "• 2.0x = le double\n\n"
+        "📊 Valeurs : **1.0 — 3.0**\n\n"
+        "Envoyez le multiplicateur :"
+    ),
+    "trailing_stop_pct": (
+        "📉 **Trailing stop — pourcentage**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Le trailing stop suit le prix à la hausse. Si le prix "
+        "redescend de X% depuis son plus haut → vente automatique.\n\n"
+        "**Comment ça marche :**\n"
+        "Contrairement au stop-loss fixe, le trailing stop s'ajuste "
+        "à la hausse. Il protège les gains acquis.\n\n"
+        "**Exemple :**\n"
+        "Trailing = 10%, entrée à $0.60\n"
+        "→ Prix monte à $0.80 → trailing à $0.72\n"
+        "→ Prix monte à $0.90 → trailing à $0.81\n"
+        "→ Prix redescend à $0.81 → VENDU (gain sécurisé)\n\n"
+        "📊 Valeurs : **2 — 50 %**\n\n"
+        "Envoyez le pourcentage :"
+    ),
+    "time_exit_hours": (
+        "⏰ **Sortie automatique — durée max**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Si une position est ouverte depuis plus de N heures "
+        "et n'a pas bougé (< 2% de variation) → vente automatique.\n\n"
+        "**Pourquoi ?**\n"
+        "Le capital mort bloqué dans une position plate ne rapporte rien. "
+        "Mieux vaut le libérer pour de meilleures opportunités.\n\n"
+        "**Exemples :**\n"
+        "• 12h = agressif — sort vite les positions mortes\n"
+        "• 24h = modéré (recommandé)\n"
+        "• 48h = patient\n\n"
+        "📊 Valeurs : **1 — 168 heures** (1h à 7 jours)\n\n"
+        "Envoyez la durée en heures :"
+    ),
+    "scale_out_pct": (
+        "📊 **Scale-out — prise de profit partielle**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Quand le take-profit est atteint, ne vend que X% de la position. "
+        "Le reste continue de courir.\n\n"
+        "**Comment ça marche :**\n"
+        "Au lieu de tout vendre d'un coup au TP, le bot sécurise une "
+        "partie des gains et laisse le reste pour un potentiel gain plus grand.\n\n"
+        "**Exemple :**\n"
+        "Scale-out = 50%, position de 100 shares au TP\n"
+        "→ Vend 50 shares (profit sécurisé)\n"
+        "→ Garde 50 shares (laisse courir)\n\n"
+        "📊 Valeurs : **10 — 90 %**\n\n"
+        "Envoyez le pourcentage à vendre au TP :"
+    ),
+    "max_positions": (
+        "📦 **Nombre max de positions ouvertes**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Limite le nombre total de positions simultanées.\n\n"
+        "**Pourquoi ?**\n"
+        "Trop de positions = capital dilué + risque de corrélation. "
+        "Mieux vaut concentrer sur les meilleures opportunités.\n\n"
+        "**Exemples :**\n"
+        "• 5 = très concentré — seulement le meilleur\n"
+        "• 15 = diversifié (recommandé)\n"
+        "• 30 = très large\n\n"
+        "📊 Valeurs : **1 — 50**\n\n"
+        "Envoyez le nombre maximum :"
+    ),
+    "max_category_exposure_pct": (
+        "📂 **Exposition max par catégorie**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pourcentage maximum du portfolio dans une seule catégorie "
+        "(Crypto, Politique, Sport, etc.).\n\n"
+        "**Pourquoi ?**\n"
+        "Évite d'avoir 80% de votre capital sur du BTC. "
+        "La diversification protège contre les mauvaises journées.\n\n"
+        "**Exemple :**\n"
+        "Max catégorie = 30%\n"
+        "→ Avec 10 positions, max 3 peuvent être en Crypto\n"
+        "→ Le 4ème trade Crypto sera bloqué\n\n"
+        "📊 Valeurs : **10 — 100 %**\n\n"
+        "Envoyez le pourcentage maximum :"
+    ),
+    "max_direction_bias_pct": (
+        "⚖️ **Biais directionnel max**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pourcentage maximum de positions dans la même direction "
+        "(toutes YES ou toutes NO).\n\n"
+        "**Pourquoi ?**\n"
+        "Si 90% de vos positions sont YES et que le marché se "
+        "retourne, vous perdez partout. Le biais directionnel "
+        "force la diversification.\n\n"
+        "**Exemple :**\n"
+        "Max biais = 70%\n"
+        "→ Sur 10 positions, max 7 peuvent être YES\n"
+        "→ Le 8ème YES sera bloqué (forcé de prendre du NO)\n\n"
+        "📊 Valeurs : **50 — 100 %**\n\n"
+        "Envoyez le pourcentage maximum :"
+    ),
+    "min_trader_winrate_for_type": (
+        "📈 **Win rate minimum du trader par type de marché**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Ne copie un trade que si le trader a un win rate prouvé "
+        "sur CE TYPE de marché (ex: BTC 5min, Politique US...).\n\n"
+        "**Comment ça marche :**\n"
+        "Le bot track le win rate de chaque trader par type de marché. "
+        "Si le trader est bon en crypto mais nul en politique, "
+        "on ne copie que ses trades crypto.\n\n"
+        "**Exemple :**\n"
+        "Min WR = 55%\n"
+        "→ Trader à 70% sur BTC 5min → copié\n"
+        "→ Trader à 45% sur Sports NFL → ignoré\n\n"
+        "📊 Valeurs : **40 — 80 %**\n\n"
+        "Envoyez le win rate minimum :"
+    ),
+    "min_trader_trades_for_type": (
+        "🔢 **Nombre min de trades pour activer le filtre**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Le filtre win rate ne s'active qu'après N trades sur ce type "
+        "de marché. Avant, les trades sont autorisés par défaut.\n\n"
+        "**Pourquoi ?**\n"
+        "Avec seulement 3 trades, un win rate de 33% ne veut rien dire. "
+        "Il faut assez de données pour juger.\n\n"
+        "**Exemples :**\n"
+        "• 5 = rapide mais moins fiable\n"
+        "• 10 = bon compromis (recommandé)\n"
+        "• 20 = très prudent, beaucoup de data\n\n"
+        "📊 Valeurs : **3 — 50**\n\n"
+        "Envoyez le nombre minimum :"
+    ),
+    "min_conviction_pct": (
+        "💪 **Conviction minimale du trader**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pourcentage minimum du portfolio du trader que représente "
+        "son trade. Filtre les petits trades sans conviction.\n\n"
+        "**Comment ça marche :**\n"
+        "Si un trader met seulement 0.5% de son capital, c'est peut-être "
+        "un test. On ne copie que s'il y met un minimum.\n\n"
+        "**Exemples :**\n"
+        "• 1% = copie quasi tout\n"
+        "• 2% = filtre les micro-trades (recommandé)\n"
+        "• 5% = ne prend que les grosses convictions\n\n"
+        "📊 Valeurs : **0.5 — 20 %**\n\n"
+        "Envoyez le pourcentage minimum :"
+    ),
+    "max_price_drift_pct": (
+        "📏 **Drift de prix maximum**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Si le prix a bougé de plus de X% depuis l'entrée du trader, "
+        "le trade n'est pas copié (trop tard).\n\n"
+        "**Comment ça marche :**\n"
+        "Entre le moment où le master trade et celui où le bot copie, "
+        "le prix peut avoir changé. Si le drift est trop grand, "
+        "le trade n'est plus intéressant.\n\n"
+        "**Exemple :**\n"
+        "Drift max = 5%\n"
+        "→ Master achète à $0.60, prix actuel $0.62 (3%) = copié\n"
+        "→ Master achète à $0.60, prix actuel $0.68 (13%) = ignoré\n\n"
+        "📊 Valeurs : **1 — 20 %**\n\n"
+        "Envoyez le pourcentage maximum :"
+    ),
 }
 
 
@@ -288,6 +505,17 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
     gas_mode = getattr(us, "gas_mode", GasMode.FAST)
     gas_label = GAS_MODE_LABELS.get(gas_mode, "🚀 Fast")
 
+    # ── V3 Smart Analysis status ──
+    scoring_on = getattr(us, "signal_scoring_enabled", True)
+    smart_on = getattr(us, "smart_filter_enabled", True)
+    trailing_on = getattr(us, "trailing_stop_enabled", False)
+    min_score = getattr(us, "min_signal_score", 40)
+    max_pos = getattr(us, "max_positions", 15)
+    notif_mode = getattr(us, "notification_mode", "dm")
+    notif_label = {"dm": "DM", "group": "Groupe", "both": "DM + Groupe"}.get(
+        notif_mode, "DM"
+    )
+
     text = (
         "⚙️ **PARAMÈTRES DE COPYTRADE**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -300,8 +528,12 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
         f"⏱️ Délai de copie : **{us.copy_delay_seconds}s**\n"
         f"🔔 Confirmation : **{'Oui' if us.manual_confirmation else 'Non'}**\n"
         f"⛽ Gas : **{gas_label}**\n"
-        f"🌉 Auto-bridge SOL : **{'Activé' if us.auto_bridge_sol else 'Désactivé'}**\n"
         f"📝 Paper Trading : **{'Oui (simulation)' if paper_trading else 'Non (réel)'}**\n"
+        f"\n"
+        f"🧠 **V3** : scoring {'✅' if scoring_on else '❌'}"
+        f" · filtre {'✅' if smart_on else '❌'}"
+        f" · trailing {'✅' if trailing_on else '❌'}"
+        f" · notifs {notif_label}\n"
     )
 
     keyboard: list[list[InlineKeyboardButton]] = [
@@ -346,6 +578,19 @@ def _build_main_menu(us, paper_trading: bool) -> tuple[str, list]:
                 callback_data="set_paper_trading",
             ),
         ],
+        # ── V3 Sub-menus (with descriptions) ──
+        [InlineKeyboardButton(
+            "🧠 Smart Analysis — scoring, filtres, tracking",
+            callback_data="set_v3_smart",
+        )],
+        [InlineKeyboardButton(
+            "📉 Positions — trailing stop, sortie auto",
+            callback_data="set_v3_positions",
+        )],
+        [
+            InlineKeyboardButton("📦 Risque", callback_data="set_v3_portfolio"),
+            InlineKeyboardButton("📬 Notifs", callback_data="set_v3_notif"),
+        ],
         [InlineKeyboardButton("⚙️ Avancé", callback_data="set_advanced")],
         [InlineKeyboardButton("🏠 Menu principal", callback_data="set_close")],
     ])
@@ -357,7 +602,12 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     await query.answer()
 
-    data = query.data  # e.g., "set_allocated_capital"
+    # Support re-rendering a sub-menu after toggle/preset
+    reload_field = context.user_data.pop("_reload_field", None)
+    if reload_field:
+        data = f"set_{reload_field}"
+    else:
+        data = query.data  # e.g., "set_allocated_capital"
     field = data.replace("set_", "")
 
     if field == "close":
@@ -423,6 +673,383 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "  → Aucun trade ne dépassera ce montant\n\n"
             f"• **Mise min** : plancher à **{us.min_trade_usdc:.2f} USDC**\n"
             "  → Les trades trop petits seront ignorés",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    # ═══════════════════════════════════════════
+    # V3 SUB-MENUS
+    # ═══════════════════════════════════════════
+
+    if field == "v3_smart":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        scoring_on = getattr(us, "signal_scoring_enabled", True)
+        smart_on = getattr(us, "smart_filter_enabled", True)
+        min_score = getattr(us, "min_signal_score", 40)
+        auto_pause = getattr(us, "auto_pause_cold_traders", True)
+        cold_thr = getattr(us, "cold_trader_threshold", 40)
+        hot_boost = getattr(us, "hot_streak_boost", 1.5)
+        skip_flip = getattr(us, "skip_coin_flip", True)
+        min_wr = getattr(us, "min_trader_winrate_for_type", 55)
+        min_trades = getattr(us, "min_trader_trades_for_type", 10)
+        min_conv = getattr(us, "min_conviction_pct", 2)
+        max_drift = getattr(us, "max_price_drift_pct", 5)
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"🧠 Scoring {'ON' if scoring_on else 'OFF'}",
+                    callback_data="set_signal_scoring_enabled",
+                ),
+                InlineKeyboardButton(
+                    f"🎯 Score min: {min_score:.0f}",
+                    callback_data="set_min_signal_score",
+                ),
+            ],
+            [InlineKeyboardButton(
+                "📐 Choisir les critères du scoring",
+                callback_data="set_v3_criteria",
+            )],
+            [
+                InlineKeyboardButton(
+                    f"🎯 Filtre smart {'ON' if smart_on else 'OFF'}",
+                    callback_data="set_smart_filter_enabled",
+                ),
+                InlineKeyboardButton(
+                    f"🪙 Skip coin-flip {'ON' if skip_flip else 'OFF'}",
+                    callback_data="set_skip_coin_flip",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🥶 Auto-pause {'ON' if auto_pause else 'OFF'}",
+                    callback_data="set_auto_pause_cold_traders",
+                ),
+                InlineKeyboardButton(
+                    f"🥶 Seuil: {cold_thr:.0f}%",
+                    callback_data="set_cold_trader_threshold",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🔥 Boost hot: {hot_boost:.1f}x",
+                    callback_data="set_hot_streak_boost",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"📈 WR min: {min_wr:.0f}%",
+                    callback_data="set_min_trader_winrate_for_type",
+                ),
+                InlineKeyboardButton(
+                    f"🔢 Trades min: {min_trades}",
+                    callback_data="set_min_trader_trades_for_type",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"💪 Conviction: {min_conv:.0f}%",
+                    callback_data="set_min_conviction_pct",
+                ),
+                InlineKeyboardButton(
+                    f"📏 Drift max: {max_drift:.0f}%",
+                    callback_data="set_max_price_drift_pct",
+                ),
+            ],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+        await query.edit_message_text(
+            "🧠 **SMART ANALYSIS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Le cerveau du bot. Chaque signal est noté 0-100 "
+            "sur 6 critères avant d'être copié._\n\n"
+            "**📊 Comment ça marche ?**\n"
+            "Le score est la somme pondérée de :\n"
+            "• Spread bid-ask (15%) — serré = bon\n"
+            "• Volume 24h du marché (15%)\n"
+            "• Conviction du trader (20%) — gros trade = confiant\n"
+            "• Win rate 7j du trader (20%)\n"
+            "• Timing d'expiry (15%) — zone idéale 2-48h\n"
+            "• Consensus entre traders (15%)\n\n"
+            f"*Scoring:* **{'Actif ✅' if scoring_on else 'Inactif ❌'}** | "
+            f"Seuil: **{min_score:.0f}/100**\n"
+            f"_Seuls les signaux ≥ {min_score:.0f} sont copiés_\n\n"
+            f"*Filtre smart:* **{'Actif ✅' if smart_on else 'Inactif ❌'}** | "
+            f"Coin-flip: **{'bloqué' if skip_flip else 'autorisé'}**\n"
+            f"_Bloque les marchés à ~$0.50, les traders sans edge, "
+            f"et les drifts > {max_drift:.0f}%_\n\n"
+            f"*Tracking traders:*\n"
+            f"  Auto-pause si WR < {cold_thr:.0f}% sur 15+ trades\n"
+            f"  Boost sizing **{hot_boost:.1f}x** si WR > 65%\n"
+            f"  WR min par type: **{min_wr:.0f}%** sur {min_trades}+ trades\n"
+            f"  Conviction min: **{min_conv:.0f}%** du portfolio trader",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "v3_criteria":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        from bot.services.signal_scorer import DEFAULT_CRITERIA
+        criteria = getattr(us, "scoring_criteria", None) or dict(DEFAULT_CRITERIA)
+
+        CRITERIA_LABELS = {
+            "spread": ("📏 Spread", "Écart bid/ask — serré = facile à exécuter"),
+            "liquidity": ("💧 Liquidité", "Volume 24h — élevé = marché actif"),
+            "conviction": ("💪 Conviction", "Taille du trade vs portfolio du trader"),
+            "trader_form": ("📈 Forme trader", "Win rate des 7 derniers jours"),
+            "timing": ("⏱ Timing", "Distance à l'expiry — idéal 2-48h"),
+            "consensus": ("👥 Consensus", "Autres traders sur le même marché"),
+        }
+
+        keyboard = []
+        status_lines = []
+        for key in ["spread", "liquidity", "conviction", "trader_form", "timing", "consensus"]:
+            cfg = criteria.get(key, {"on": True, "w": DEFAULT_CRITERIA[key]["w"]})
+            is_on = cfg.get("on", True)
+            weight = cfg.get("w", 15)
+            label, desc = CRITERIA_LABELS[key]
+            emoji = "✅" if is_on else "❌"
+            keyboard.append([InlineKeyboardButton(
+                f"{emoji} {label} — poids: {weight}%",
+                callback_data=f"set_crit_toggle_{key}",
+            )])
+            status_lines.append(
+                f"{emoji} *{label}* (poids {weight}%)\n   _{desc}_"
+            )
+
+        # Presets row
+        keyboard.append([
+            InlineKeyboardButton("⚖️ Tout ON", callback_data="set_crit_preset_all"),
+            InlineKeyboardButton("🎯 Trader seul", callback_data="set_crit_preset_trader"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("📊 Marché seul", callback_data="set_crit_preset_market"),
+            InlineKeyboardButton("🔥 Minimal", callback_data="set_crit_preset_minimal"),
+        ])
+        keyboard.append([InlineKeyboardButton("⬅️ Retour", callback_data="set_v3_smart")])
+
+        await query.edit_message_text(
+            "📐 **CRITÈRES DU SCORING**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Cochez/décochez les critères utilisés pour noter "
+            "chaque signal. Les poids se redistribuent automatiquement._\n\n"
+            + "\n".join(status_lines) + "\n\n"
+            "**Presets :**\n"
+            "⚖️ *Tout ON* — les 6 critères, poids par défaut\n"
+            "🎯 *Trader seul* — forme + conviction seulement\n"
+            "📊 *Marché seul* — spread + liquidité + timing\n"
+            "🔥 *Minimal* — forme trader + spread (le plus rapide)",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    # Handle criteria toggle
+    if field.startswith("crit_toggle_"):
+        crit_key = field.replace("crit_toggle_", "")
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+            from bot.services.signal_scorer import DEFAULT_CRITERIA
+            criteria = getattr(us, "scoring_criteria", None) or dict(DEFAULT_CRITERIA)
+            if crit_key in criteria:
+                criteria[crit_key]["on"] = not criteria[crit_key].get("on", True)
+            else:
+                criteria[crit_key] = {"on": False, "w": DEFAULT_CRITERIA.get(crit_key, {}).get("w", 15)}
+
+            await update_setting(session, us, "scoring_criteria", criteria)
+
+        # Re-render criteria menu
+        context.user_data["_reload_field"] = "v3_criteria"
+        return await setting_selected(update, context)
+
+    # Handle criteria presets
+    if field.startswith("crit_preset_"):
+        preset = field.replace("crit_preset_", "")
+        from bot.services.signal_scorer import DEFAULT_CRITERIA
+
+        if preset == "all":
+            criteria = dict(DEFAULT_CRITERIA)
+        elif preset == "trader":
+            criteria = {k: {"on": k in ("trader_form", "conviction"), "w": v["w"]}
+                        for k, v in DEFAULT_CRITERIA.items()}
+        elif preset == "market":
+            criteria = {k: {"on": k in ("spread", "liquidity", "timing"), "w": v["w"]}
+                        for k, v in DEFAULT_CRITERIA.items()}
+        elif preset == "minimal":
+            criteria = {k: {"on": k in ("trader_form", "spread"), "w": v["w"]}
+                        for k, v in DEFAULT_CRITERIA.items()}
+        else:
+            criteria = dict(DEFAULT_CRITERIA)
+
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+            await update_setting(session, us, "scoring_criteria", criteria)
+
+        # Re-render criteria menu
+        context.user_data["_reload_field"] = "v3_criteria"
+        return await setting_selected(update, context)
+
+    if field == "v3_positions":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        sl_on = getattr(us, "stop_loss_enabled", True)
+        tp_on = getattr(us, "take_profit_enabled", False)
+        trail_on = getattr(us, "trailing_stop_enabled", False)
+        trail_pct = getattr(us, "trailing_stop_pct", 10)
+        time_on = getattr(us, "time_exit_enabled", False)
+        time_h = getattr(us, "time_exit_hours", 24)
+        scale_on = getattr(us, "scale_out_enabled", False)
+        scale_pct = getattr(us, "scale_out_pct", 50)
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"📉 Trailing {'ON' if trail_on else 'OFF'}",
+                    callback_data="set_trailing_stop_enabled",
+                ),
+                InlineKeyboardButton(
+                    f"📉 Trail: {trail_pct:.0f}%",
+                    callback_data="set_trailing_stop_pct",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"⏰ Time exit {'ON' if time_on else 'OFF'}",
+                    callback_data="set_time_exit_enabled",
+                ),
+                InlineKeyboardButton(
+                    f"⏰ Après: {time_h}h",
+                    callback_data="set_time_exit_hours",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"📊 Scale-out {'ON' if scale_on else 'OFF'}",
+                    callback_data="set_scale_out_enabled",
+                ),
+                InlineKeyboardButton(
+                    f"📊 Vendre: {scale_pct:.0f}%",
+                    callback_data="set_scale_out_pct",
+                ),
+            ],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+        await query.edit_message_text(
+            "📉 **GESTION DES POSITIONS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Gestion active de vos positions ouvertes. "
+            "Le bot vérifie les prix toutes les 15 secondes._\n\n"
+            "**Trailing Stop** — Suit le prix à la hausse\n"
+            f"  État: **{'Actif' if trail_on else 'Inactif'}** | "
+            f"Seuil: **{trail_pct:.0f}%** sous le plus haut\n"
+            "  _Ex: entrée $0.60, pic $0.90 → vente si redescend à "
+            f"${0.90 * (1 - trail_pct/100):.2f}_\n\n"
+            "**Time Exit** — Sort les positions mortes\n"
+            f"  État: **{'Actif' if time_on else 'Inactif'}** | "
+            f"Après: **{time_h}h** si < 2% de mouvement\n"
+            "  _Libère le capital bloqué dans des positions plates_\n\n"
+            "**Scale-Out** — Prise de profit partielle\n"
+            f"  État: **{'Actif' if scale_on else 'Inactif'}** | "
+            f"Vend **{scale_pct:.0f}%** au take-profit\n"
+            "  _Sécurise une partie, laisse le reste courir_\n\n"
+            "💡 _Le SL/TP classique se configure dans le menu principal_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "v3_portfolio":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        max_pos = getattr(us, "max_positions", 15)
+        max_cat = getattr(us, "max_category_exposure_pct", 30)
+        max_bias = getattr(us, "max_direction_bias_pct", 70)
+
+        keyboard = [
+            [InlineKeyboardButton(
+                f"📦 Max positions: {max_pos}",
+                callback_data="set_max_positions",
+            )],
+            [InlineKeyboardButton(
+                f"📂 Max par catégorie: {max_cat:.0f}%",
+                callback_data="set_max_category_exposure_pct",
+            )],
+            [InlineKeyboardButton(
+                f"⚖️ Biais max: {max_bias:.0f}%",
+                callback_data="set_max_direction_bias_pct",
+            )],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+        await query.edit_message_text(
+            "📦 **PORTFOLIO & RISQUE**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Contrôles au niveau du portfolio. Empêche la surexposition._\n\n"
+            f"**Max positions** : **{max_pos}**\n"
+            "  Nombre total de positions ouvertes simultanément.\n"
+            "  _Au-delà, les nouveaux trades sont ignorés._\n\n"
+            f"**Max par catégorie** : **{max_cat:.0f}%**\n"
+            "  Limite l'exposition dans une catégorie (Crypto, Politique...).\n"
+            "  _Ex: sur 10 positions, max 3 en Crypto si réglé à 30%_\n\n"
+            f"**Biais directionnel** : **{max_bias:.0f}%**\n"
+            "  Évite d'avoir toutes les positions dans la même direction.\n"
+            "  _Ex: si 70%, max 7 positions YES sur 10 au total_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    if field == "v3_notif":
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+
+        mode = getattr(us, "notification_mode", "dm")
+        notif_labels = {"dm": "DM", "group": "Groupe", "both": "DM + Groupe"}
+
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{'✅' if mode == 'dm' else '⬜'} DM uniquement",
+                callback_data="set_notif_dm",
+            )],
+            [InlineKeyboardButton(
+                f"{'✅' if mode == 'group' else '⬜'} Groupe uniquement",
+                callback_data="set_notif_group",
+            )],
+            [InlineKeyboardButton(
+                f"{'✅' if mode == 'both' else '⬜'} DM + Groupe",
+                callback_data="set_notif_both",
+            )],
+            [InlineKeyboardButton("⬅️ Retour", callback_data="set_back_main")],
+        ]
+        await query.edit_message_text(
+            "📬 **NOTIFICATIONS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "_Où recevoir les notifications automatiques (trades copiés, "
+            "alertes SL/TP, settlements, etc.)_\n\n"
+            f"Mode actuel : **{notif_labels.get(mode, 'DM')}**\n\n"
+            "**📱 DM uniquement** — Tout en messages privés\n"
+            "  _Classique, comme avant_\n\n"
+            "**👥 Groupe uniquement** — Dans les topics du groupe\n"
+            "  _Signaux → topic Signals, Alertes → topic Alerts, etc._\n\n"
+            "**📱+👥 DM + Groupe** — Les deux en parallèle\n"
+            "  _Maximum de visibilité_\n\n"
+            "💡 _Les commandes interactives (settings, wallet, etc.) "
+            "restent toujours en DM._",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -599,8 +1226,30 @@ async def setting_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return MAIN_MENU
 
-    # Toggle fields (boolean)
-    if field in ("manual_confirmation", "auto_bridge_sol", "use_gamma_monitor", "use_ws_monitor"):
+    # ── V3 Notification mode selector ──
+    if field in ("notif_dm", "notif_group", "notif_both"):
+        mode_map = {"notif_dm": "dm", "notif_group": "group", "notif_both": "both"}
+        new_mode = mode_map[field]
+        async with async_session() as session:
+            user = await get_user_by_telegram_id(session, query.from_user.id)
+            us = await get_or_create_settings(session, user)
+            await update_setting(session, us, "notification_mode", new_mode)
+            await session.refresh(us)
+            text, keyboard = _build_main_menu(us, user.paper_trading)
+        label = {"dm": "DM", "group": "Groupe", "both": "DM + Groupe"}[new_mode]
+        await query.edit_message_text(
+            f"✅ Notifications passées en **{label}**\n\n" + text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return MAIN_MENU
+
+    # Toggle fields (boolean) — V1 + V3
+    V3_TOGGLE_FIELDS = (
+        "signal_scoring_enabled", "smart_filter_enabled", "auto_pause_cold_traders",
+        "skip_coin_flip", "trailing_stop_enabled", "time_exit_enabled", "scale_out_enabled",
+    )
+    if field in ("manual_confirmation", "auto_bridge_sol", "use_gamma_monitor", "use_ws_monitor") + V3_TOGGLE_FIELDS:
         async with async_session() as session:
             user = await get_user_by_telegram_id(session, query.from_user.id)
             us = await get_or_create_settings(session, user)

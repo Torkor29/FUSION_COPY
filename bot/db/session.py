@@ -65,6 +65,35 @@ async def init_db() -> None:
             "ALTER TABLE trades ADD COLUMN settlement_pnl FLOAT",
             "ALTER TABLE trades ADD COLUMN market_outcome VARCHAR(64)",
             "ALTER TABLE user_settings ADD COLUMN gas_mode VARCHAR(10) DEFAULT 'fast'",
+            # ── V3 Smart Analysis migrations ──
+            # Notification routing
+            "ALTER TABLE user_settings ADD COLUMN notification_mode VARCHAR(8) DEFAULT 'dm'",
+            # Signal Scoring
+            "ALTER TABLE user_settings ADD COLUMN signal_scoring_enabled BOOLEAN DEFAULT true",
+            "ALTER TABLE user_settings ADD COLUMN min_signal_score FLOAT DEFAULT 40.0",
+            # Trader tracking
+            "ALTER TABLE user_settings ADD COLUMN auto_pause_cold_traders BOOLEAN DEFAULT true",
+            "ALTER TABLE user_settings ADD COLUMN cold_trader_threshold FLOAT DEFAULT 40.0",
+            "ALTER TABLE user_settings ADD COLUMN hot_streak_boost FLOAT DEFAULT 1.5",
+            # Position management
+            "ALTER TABLE user_settings ADD COLUMN trailing_stop_enabled BOOLEAN DEFAULT false",
+            "ALTER TABLE user_settings ADD COLUMN trailing_stop_pct FLOAT DEFAULT 10.0",
+            "ALTER TABLE user_settings ADD COLUMN time_exit_enabled BOOLEAN DEFAULT false",
+            "ALTER TABLE user_settings ADD COLUMN time_exit_hours INTEGER DEFAULT 24",
+            "ALTER TABLE user_settings ADD COLUMN scale_out_enabled BOOLEAN DEFAULT false",
+            "ALTER TABLE user_settings ADD COLUMN scale_out_pct FLOAT DEFAULT 50.0",
+            # Portfolio risk controls
+            "ALTER TABLE user_settings ADD COLUMN max_positions INTEGER DEFAULT 15",
+            "ALTER TABLE user_settings ADD COLUMN max_category_exposure_pct FLOAT DEFAULT 30.0",
+            "ALTER TABLE user_settings ADD COLUMN max_direction_bias_pct FLOAT DEFAULT 70.0",
+            # Smart filter
+            "ALTER TABLE user_settings ADD COLUMN smart_filter_enabled BOOLEAN DEFAULT true",
+            "ALTER TABLE user_settings ADD COLUMN min_trader_winrate_for_type FLOAT DEFAULT 55.0",
+            "ALTER TABLE user_settings ADD COLUMN min_trader_trades_for_type INTEGER DEFAULT 10",
+            "ALTER TABLE user_settings ADD COLUMN skip_coin_flip BOOLEAN DEFAULT true",
+            "ALTER TABLE user_settings ADD COLUMN min_conviction_pct FLOAT DEFAULT 2.0",
+            "ALTER TABLE user_settings ADD COLUMN max_price_drift_pct FLOAT DEFAULT 5.0",
+            "ALTER TABLE user_settings ADD COLUMN scoring_criteria TEXT",
         ]
         for stmt in migrations:
             await _safe_add_column(conn, stmt)

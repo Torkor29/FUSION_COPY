@@ -39,14 +39,40 @@ logger = logging.getLogger(__name__)
 
 
 class CopyTradeEngine:
-    """Main copytrade orchestrator — optimized for sub-second execution."""
+    """Main copytrade orchestrator — optimized for sub-second execution.
 
-    def __init__(self, telegram_bot=None):
+    V3: Now supports optional smart analysis services:
+    - signal_scorer: Scores signals 0-100 before execution
+    - smart_filter: Pattern-based trade filtering
+    - portfolio_manager: Portfolio-level risk controls
+    - position_manager: Active SL/TP enforcement
+    - trader_tracker: Performance tracking for sizing adjustments
+    - topic_router: Routes notifications to Telegram group topics
+    """
+
+    def __init__(
+        self,
+        telegram_bot=None,
+        signal_scorer=None,
+        smart_filter=None,
+        portfolio_manager=None,
+        position_manager=None,
+        trader_tracker=None,
+        topic_router=None,
+    ):
         self._bot = telegram_bot
         self._master_portfolio_usdc: float = 10000.0
         # Cache master portfolio values (refreshed each signal)
         self._portfolio_cache: dict[str, tuple[float, float]] = {}  # wallet -> (value, timestamp)
         _PORTFOLIO_CACHE_TTL = 30  # seconds
+
+        # V3 — Smart Analysis services (all optional for backward compat)
+        self._signal_scorer = signal_scorer
+        self._smart_filter = smart_filter
+        self._portfolio_manager = portfolio_manager
+        self._position_manager = position_manager
+        self._trader_tracker = trader_tracker
+        self._topic_router = topic_router
 
     async def handle_signal(self, signal: TradeSignal) -> None:
         """Process a trade signal — only for followers of signal.master_wallet."""
@@ -69,6 +95,22 @@ class CopyTradeEngine:
         logger.info(
             f"{len(followers)} follower(s) for {signal.master_wallet[:10]}..."
         )
+
+        # ── V3: Score signal ONCE before processing followers ──
+        signal_score = None
+        if self._signal_scorer:
+            try:
+                signal_score = await self._signal_scorer.score_signal(signal)
+                # Attach score to signal for per-follower threshold check
+                signal._v3_score = signal_score
+                # Post scored signal to group topic
+                if self._topic_router:
+                    from bot.services.signal_scorer import SignalScorer
+                    score_text = SignalScorer.format_score(signal_score, signal)
+                    await self._topic_router.send_signal(score_text)
+            except Exception as e:
+                logger.warning("Signal scoring failed (continuing): %s", e)
+                signal._v3_score = None
 
         # Estimate master portfolio value once per signal for proportional sizing
         master_portfolio_usdc = await self._compute_master_portfolio(
@@ -142,6 +184,100 @@ class CopyTradeEngine:
                 if not await self._passes_filters(user_settings, signal):
                     logger.info(f"User {tg_id}: signal filtered out by settings")
                     return
+
+                # ── V3 Checkpoint 1: Signal Score threshold ──
+                v3_score = getattr(signal, "_v3_score", None)
+                if (
+                    v3_score
+                    and getattr(user_settings, "signal_scoring_enabled", False)
+                ):
+                    min_score = getattr(user_settings, "min_signal_score", 40.0)
+
+                    # Recalculate score with user's per-criteria config
+                    # (reuses raw scores from central scoring, just reweights)
+                    user_criteria = getattr(user_settings, "scoring_criteria", None)
+                    if user_criteria and v3_score.components:
+                        from bot.services.signal_scorer import compute_weights
+                        user_weights = compute_weights(user_criteria)
+                        user_total = 0
+                        for k, w in user_weights.items():
+                            comp = v3_score.components.get(k, {})
+                            raw_score = comp.get("score", 50) if isinstance(comp, dict) else float(comp)
+                            user_total += raw_score * w
+                        user_total = round(min(100, max(0, user_total)), 1)
+                    else:
+                        user_total = v3_score.total_score
+
+                    if user_total < min_score:
+                        logger.info(
+                            f"User {tg_id}: signal score {user_total:.0f} "
+                            f"< threshold {min_score:.0f} — skipping"
+                        )
+                        return
+
+                # ── V3 Checkpoint 2: Smart Filter ──
+                if self._smart_filter:
+                    try:
+                        should_copy, reason = await self._smart_filter.should_copy(
+                            signal, user_settings
+                        )
+                        if not should_copy:
+                            logger.info(
+                                f"User {tg_id}: smart filter blocked — {reason}"
+                            )
+                            # Notify user that signal was filtered
+                            if self._topic_router:
+                                from bot.handlers.notifications import format_signal_blocked
+                                v3s = getattr(signal, "_v3_score", None)
+                                blocked_text = format_signal_blocked(
+                                    market_question=signal.market_question or signal.market_id[:20],
+                                    reason=reason,
+                                    score=v3s.total_score if v3s else 0,
+                                )
+                                notif_mode = getattr(user_settings, "notification_mode", "dm")
+                                await self._topic_router.notify_user(
+                                    user_telegram_id=tg_id,
+                                    text=blocked_text,
+                                    notification_mode=notif_mode,
+                                    topic="signals",
+                                )
+                            return
+                    except Exception as e:
+                        logger.warning("Smart filter error (allowing): %s", e)
+
+                # ── V3 Checkpoint 3: Portfolio risk check ──
+                if self._portfolio_manager and signal.side == "BUY":
+                    try:
+                        from bot.services.market_categories import categorize_market
+                        market_cat = categorize_market(
+                            title=signal.market_question or "",
+                            slug="",
+                            api_category="",
+                        )
+                        allowed, reason = await self._portfolio_manager.check_can_open(
+                            user.id,
+                            signal.market_id,
+                            market_cat.category if market_cat else "Other",
+                            signal.side,
+                            max_positions=getattr(user_settings, "max_positions", 15),
+                            max_category_exposure_pct=getattr(
+                                user_settings, "max_category_exposure_pct", 30.0
+                            ),
+                            max_direction_bias_pct=getattr(
+                                user_settings, "max_direction_bias_pct", 70.0
+                            ),
+                        )
+                        if not allowed:
+                            logger.info(
+                                f"User {tg_id}: portfolio blocked — {reason}"
+                            )
+                            if self._topic_router:
+                                await self._topic_router.send_alert(
+                                    f"⚠️ Trade blocked for user {tg_id}: {reason}"
+                                )
+                            return
+                    except Exception as e:
+                        logger.warning("Portfolio check error (allowing): %s", e)
 
                 if user_settings.copy_delay_seconds > 0:
                     logger.debug(f"User {tg_id}: delaying {user_settings.copy_delay_seconds}s")
@@ -432,6 +568,44 @@ class CopyTradeEngine:
                     user, trade, fee_result, elapsed, signal
                 )
 
+                # ── V3: Register position for active SL/TP monitoring ──
+                if (
+                    self._position_manager
+                    and signal.side == "BUY"
+                    and trade.status == TradeStatus.FILLED
+                ):
+                    try:
+                        sl_pct = (
+                            user_settings.stop_loss_pct
+                            if getattr(user_settings, "stop_loss_enabled", False)
+                            else None
+                        )
+                        tp_pct = (
+                            user_settings.take_profit_pct
+                            if getattr(user_settings, "take_profit_enabled", False)
+                            else None
+                        )
+                        trailing = (
+                            getattr(user_settings, "trailing_stop_pct", None)
+                            if getattr(user_settings, "trailing_stop_enabled", False)
+                            else None
+                        )
+                        await self._position_manager.register_position(
+                            user_id=user.id,
+                            trade_id=trade.trade_id,
+                            market_id=signal.market_id,
+                            token_id=signal.token_id,
+                            outcome=signal.outcome or "YES",
+                            entry_price=signal.price,
+                            shares=trade.shares or 0,
+                            market_question=signal.market_question or "",
+                            sl_pct=sl_pct,
+                            tp_pct=tp_pct,
+                            trailing_stop_pct=trailing,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to register position for monitoring: %s", e)
+
                 logger.info(
                     f"Trade copied for user {user.telegram_id}: "
                     f"{trade.side.value} {trade.net_amount_usdc:.2f} USDC "
@@ -452,9 +626,18 @@ class CopyTradeEngine:
                         market_question=signal.market_question or signal.outcome,
                         error_message=f"Erreur inattendue : {str(e)[:200]}",
                     )
-                    await self._bot.send_message(
-                        chat_id=tg_id, text=text, parse_mode="Markdown",
-                    )
+                    # V3: Route crash errors to Alerts topic
+                    if self._topic_router:
+                        await self._topic_router.notify_user(
+                            user_telegram_id=tg_id,
+                            text=text,
+                            notification_mode="both",  # Crash = always DM + group
+                            topic="alerts",
+                        )
+                    else:
+                        await self._bot.send_message(
+                            chat_id=tg_id, text=text, parse_mode="Markdown",
+                        )
             except Exception:
                 pass
 
@@ -607,7 +790,10 @@ class CopyTradeEngine:
         elapsed: float,
         signal: TradeSignal,
     ) -> None:
-        """Send success notification via Telegram."""
+        """Send success notification via Telegram.
+
+        V3: Routes to Signals topic + DM based on user notification_mode.
+        """
         if not self._bot:
             return
 
@@ -632,22 +818,36 @@ class CopyTradeEngine:
         try:
             import asyncio as _asyncio
 
-            msg = await self._bot.send_message(
-                chat_id=user.telegram_id,
-                text=text,
-                parse_mode="Markdown",
-                reply_markup=keyboard,
-            )
+            # V3: Route via TopicRouter based on user preference
+            if self._topic_router:
+                async with async_session() as session:
+                    us = await get_or_create_settings(session, user)
+                    notif_mode = getattr(us, "notification_mode", "dm")
 
-            # Auto-delete trade notification after 60 seconds
-            async def _auto_del():
-                await _asyncio.sleep(60)
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
+                await self._topic_router.notify_user(
+                    user_telegram_id=user.telegram_id,
+                    text=text,
+                    notification_mode=notif_mode,
+                    topic="signals",
+                    reply_markup=keyboard,
+                )
+            else:
+                # Fallback: DM only (V1 compat)
+                msg = await self._bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=text,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard,
+                )
 
-            _asyncio.create_task(_auto_del())
+                async def _auto_del():
+                    await _asyncio.sleep(60)
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                _asyncio.create_task(_auto_del())
+
         except Exception as e:
             logger.error(f"Failed to send notification to {user.telegram_id}: {e}")
 
@@ -661,7 +861,10 @@ class CopyTradeEngine:
         signal: TradeSignal,
         error: str,
     ) -> None:
-        """Send error notification via Telegram (auto-deletes after 30s, rate-limited)."""
+        """Send error notification via Telegram (rate-limited).
+
+        V3: Routes to Alerts topic + DM based on user notification_mode.
+        """
         if not self._bot:
             return
 
@@ -687,20 +890,33 @@ class CopyTradeEngine:
         )
 
         try:
-            msg = await self._bot.send_message(
-                chat_id=user.telegram_id,
-                text=text,
-                parse_mode="Markdown",
-            )
+            # V3: Route to Alerts topic
+            if self._topic_router:
+                async with async_session() as session:
+                    us = await get_or_create_settings(session, user)
+                    notif_mode = getattr(us, "notification_mode", "dm")
 
-            # Auto-delete error notification after 30 seconds
-            async def _auto_del():
-                await _asyncio.sleep(30)
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
+                await self._topic_router.notify_user(
+                    user_telegram_id=user.telegram_id,
+                    text=text,
+                    notification_mode=notif_mode,
+                    topic="alerts",
+                )
+            else:
+                # Fallback: DM only (V1 compat)
+                msg = await self._bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=text,
+                    parse_mode="Markdown",
+                )
 
-            _asyncio.create_task(_auto_del())
+                async def _auto_del():
+                    await _asyncio.sleep(30)
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                _asyncio.create_task(_auto_del())
+
         except Exception as e:
             logger.error(f"Failed to send error notification: {e}")

@@ -31,7 +31,7 @@ async def cleanup_expired_otps() -> None:
         logger.info(f"Cleaned up {count} expired OTP challenges")
 
 
-async def settle_trades(bot=None) -> None:
+async def settle_trades(bot=None, topic_router=None, trader_tracker=None) -> None:
     """Settle ALL trades (paper + live) whose markets have resolved.
 
     Runs every 2 minutes. For each unsettled FILLED BUY trade:
@@ -116,10 +116,28 @@ async def settle_trades(bot=None) -> None:
                         f"pnl={pnl:+.2f} payout={payout:.2f}"
                     )
 
+                    # V3: Record trade outcome for trader tracker
+                    if trader_tracker and trade.master_wallet:
+                        try:
+                            from bot.services.smart_filter import SmartFilter
+                            market_type = SmartFilter.categorize_market_type(
+                                trade.market_question or ""
+                            )
+                            return_pct = (pnl / invested * 100) if invested > 0 else 0
+                            await trader_tracker.record_trade_outcome(
+                                wallet=trade.master_wallet,
+                                market_type=market_type,
+                                won=won,
+                                return_pct=return_pct,
+                            )
+                        except Exception as e:
+                            logger.debug(f"Tracker update failed: {e}")
+
                     # Notify user
                     if bot:
                         await _notify_settlement(
-                            bot, session, trade, won, pnl, payout
+                            bot, session, trade, won, pnl, payout,
+                            topic_router=topic_router,
                         )
 
             if settled_count > 0:
@@ -136,8 +154,11 @@ async def settle_trades(bot=None) -> None:
 settle_paper_trades = settle_trades
 
 
-async def _notify_settlement(bot, session, trade, won, pnl, payout):
-    """Send settlement notification to user."""
+async def _notify_settlement(bot, session, trade, won, pnl, payout, topic_router=None):
+    """Send settlement notification to user.
+
+    V3: Routes to Portfolio topic based on user preference.
+    """
     import asyncio
 
     try:
@@ -152,29 +173,42 @@ async def _notify_settlement(bot, session, trade, won, pnl, payout):
         outcome = trade.market_outcome or "?"
 
         text = (
-            f"{emoji} **MARCHÉ RÉSOLU**{paper}\n"
+            f"{emoji} *MARCHÉ RÉSOLU*{paper}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 {q}\n"
-            f"🏆 Résultat : **{outcome}** → **{result_text}**\n"
+            f"🏆 Résultat : *{outcome}* → *{result_text}*\n"
             f"💰 Mise : {trade.net_amount_usdc:.2f} USDC\n"
             f"💵 Payout : {payout:.2f} USDC\n"
-            f"📈 P&L : **{pnl:+.2f} USDC**"
+            f"📈 P&L : *{pnl:+.2f} USDC*"
         )
 
-        msg = await bot.send_message(
-            chat_id=user.telegram_id,
-            text=text,
-            parse_mode="Markdown",
-        )
+        # V3: Route to Portfolio topic
+        if topic_router:
+            from bot.services.user_service import get_or_create_settings
+            us = await get_or_create_settings(session, user)
+            notif_mode = getattr(us, "notification_mode", "dm")
 
-        # Auto-delete after 120s
-        async def _auto_del():
-            await asyncio.sleep(120)
-            try:
-                await msg.delete()
-            except Exception:
-                pass
-        asyncio.create_task(_auto_del())
+            await topic_router.notify_user(
+                user_telegram_id=user.telegram_id,
+                text=text,
+                notification_mode=notif_mode,
+                topic="portfolio",
+            )
+        else:
+            # Fallback: DM only
+            msg = await bot.send_message(
+                chat_id=user.telegram_id,
+                text=text,
+                parse_mode="Markdown",
+            )
+
+            async def _auto_del():
+                await asyncio.sleep(120)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_auto_del())
 
     except Exception as e:
         logger.error(f"Settlement notification error: {e}")

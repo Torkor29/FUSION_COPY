@@ -125,24 +125,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Show help."""
     keyboard = [[InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")]]
     await update.message.reply_text(
-        "❓ **AIDE — WENPOLYMARKET**\n"
+        "❓ **AIDE — WENPOLYMARKET V3**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "**Menu principal** (le plus simple) :\n"
-        "Tapez /start puis cliquez sur « Accéder au menu principal ».\n"
-        "Tout est accessible depuis les boutons du menu.\n\n"
+        "Tapez /start puis « Accéder au menu principal ».\n\n"
         "**Commandes rapides :**\n"
-        "⏸️ /pause — Mettre le copy-trading en pause\n"
-        "▶️ /resume — Reprendre le copy-trading\n"
-        "🛑 /stop — Arrêter complètement\n"
-        "📈 /stats — Vos statistiques\n\n"
+        "⏸️ /pause — Pause le copy-trading\n"
+        "▶️ /resume — Reprendre\n"
+        "🛑 /stop — Arrêter\n"
+        "📈 /stats — Vos statistiques\n"
+        "📊 /analytics — Tableau de bord V3\n\n"
         "**Comment ça marche :**\n"
-        "1. Configurez un wallet Polygon (menu)\n"
-        "2. Déposez des USDC dessus\n"
-        "3. Choisissez vos traders dans Paramètres\n"
-        "4. Les trades sont copiés automatiquement\n"
-        "5. Frais : 1% par trade copié\n\n"
-        "🔒 Clés chiffrées AES-256 • Jamais exposées en clair\n"
-        "📝 Paper Trading activé par défaut",
+        "1. Configurez un wallet Polygon\n"
+        "2. Déposez des USDC\n"
+        "3. Choisissez vos traders dans ⚙️ Paramètres\n"
+        "4. Le bot analyse chaque signal (score 0-100)\n"
+        "5. Seuls les bons trades sont copiés\n\n"
+        "🧠 **V3 Smart Analysis :**\n"
+        "• Score de chaque signal avant copie\n"
+        "• Trailing stop, sortie auto, scale-out\n"
+        "• Contrôle du risque portfolio\n"
+        "→ Tout configurable dans ⚙️ → 🧠 Smart Analysis\n\n"
+        "📝 Paper Trading activé par défaut\n"
+        "🔒 Clés chiffrées AES-256",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
