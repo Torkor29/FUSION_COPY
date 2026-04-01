@@ -44,6 +44,8 @@ INLINE_TOGGLES: dict[str, str] = {
     "set_smart_filter_enabled":    "smart_filter_enabled",
     "set_skip_coin_flip":          "skip_coin_flip",
     "set_auto_pause_cold_traders": "auto_pause_cold_traders",
+    "set_stop_loss_enabled":       "stop_loss_enabled",
+    "set_take_profit_enabled":     "take_profit_enabled",
     "set_trailing_stop_enabled":   "trailing_stop_enabled",
     "set_time_exit_enabled":       "time_exit_enabled",
     "set_scale_out_enabled":       "scale_out_enabled",
@@ -54,6 +56,8 @@ _TOGGLE_LABELS: dict[str, tuple[str, str]] = {
     "smart_filter_enabled":    ("✅ Smart Filter activé",   "❌ Smart Filter désactivé"),
     "skip_coin_flip":          ("✅ Coin-flip ignoré",      "❌ Coin-flip inclus"),
     "auto_pause_cold_traders": ("✅ Auto-pause activé",     "❌ Auto-pause désactivé"),
+    "stop_loss_enabled":       ("✅ Stop-Loss activé",      "❌ Stop-Loss désactivé"),
+    "take_profit_enabled":     ("✅ Take-Profit activé",    "❌ Take-Profit désactivé"),
     "trailing_stop_enabled":   ("✅ Trailing Stop activé",  "❌ Trailing Stop désactivé"),
     "time_exit_enabled":       ("✅ Time Exit activé",      "❌ Time Exit désactivé"),
     "scale_out_enabled":       ("✅ Scale-Out activé",      "❌ Scale-Out désactivé"),
@@ -142,13 +146,11 @@ PRESET_PICKERS: dict[str, tuple[str, str, str, list[tuple[str, str]]]] = {
     ),
 }
 
-# Boutons qui ouvrent un sous-menu SL/TP → on montre le preset du bon champ
+# Boutons qui ouvrent un sous-menu → cible preset ou sous-menu dédié
 _MENU_TO_PRESET: dict[str, str] = {
-    "set_stop_loss_menu":    "set_stop_loss_pct",
-    "set_take_profit_menu":  "set_take_profit_pct",
-    "set_v3_positions":      "_positions_submenu",   # sous-menu dédié
-    "set_v3_smart":          "_smart_submenu",
-    "set_v3_portfolio":      "_portfolio_submenu",
+    "set_v3_positions":          "_positions_submenu",   # sous-menu dédié
+    "set_v3_smart":              "_smart_submenu",
+    "set_v3_portfolio":          "_portfolio_submenu",
     "set_scoring_criteria_menu": "_smart_submenu",
 }
 
@@ -158,9 +160,8 @@ _MENU_TO_PRESET: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────
 
 REPORT_ACTIONS: set[str] = {
-    "v3_analytics",          # analytics traders → topic 👤 Traders
-    "menu_portfolio_refresh",  # refresh → topic 💼 Portfolio
-    "menu_traders",            # refresh → topic 👤 Traders
+    "v3_analytics",           # analytics traders → topic 👤 Traders
+    "menu_portfolio_refresh", # refresh → topic 💼 Portfolio
 }
 
 
@@ -485,14 +486,16 @@ async def _show_submenu(
     # Mapping sous-menu → champs concernés
     submenu_fields: dict[str, list[str]] = {
         "_positions_submenu": [
+            "set_stop_loss_enabled",
+            "set_stop_loss_pct",
+            "set_take_profit_enabled",
+            "set_take_profit_pct",
             "set_trailing_stop_enabled",
             "set_trailing_stop_pct",
             "set_time_exit_enabled",
             "set_time_exit_hours",
             "set_scale_out_enabled",
             "set_scale_out_pct",
-            "set_stop_loss_pct",
-            "set_take_profit_pct",
         ],
         "_smart_submenu": [
             "set_signal_scoring_enabled",

@@ -194,9 +194,13 @@ async def _show_traders_menu(update: Update, user: User, us) -> None:
 
     lines += [
         f"*Protection automatique :*",
-        f"  Auto-pause cold traders : {on if auto_pause else off}",
-        f"  Seuil cold : *{cold_thresh:.0f}%* WR",
-        f"  Boost hot trader : *×{hot_boost:.1f}*",
+        f"  {on if auto_pause else off} Auto-pause cold traders",
+        f"  ↳ Un trader est *'cold'* si son WR 7j tombe sous *{cold_thresh:.0f}%*",
+        f"  ↳ En dessous du seuil → ses signaux sont ignorés automatiquement",
+        f"  ↳ Il est réactivé si son WR remonte au-dessus du seuil\n",
+        f"  🔥 Boost hot streak : *×{hot_boost:.1f}*",
+        f"  ↳ Multiplie la taille copiée si le trader est en série de wins",
+        f"  ↳ Ex : si taille calculée = $50 et boost ×1.5 → $75 copié",
     ]
 
     text = "\n".join(lines)
@@ -310,9 +314,14 @@ async def _show_portfolio_menu(update: Update, user: User, us) -> None:
 
     lines += [
         f"*Limites de risque :*",
-        f"  Max positions : *{max_pos}*",
-        f"  Max catégorie : *{max_cat_exp:.0f}%*",
-        f"  Biais direction max : *{max_dir:.0f}%*",
+        f"  📦 Max positions : *{max_pos}*",
+        f"  ↳ Bloque tout nouveau trade si *{max_pos}* positions sont déjà ouvertes\n",
+        f"  📂 Max par catégorie : *{max_cat_exp:.0f}%*",
+        f"  ↳ Ex : si *{max_cat_exp:.0f}%* du portfolio est déjà en Crypto → nouveaux",
+        f"    trades Crypto bloqués jusqu'à ce que ça redescende\n",
+        f"  ⚖️ Biais direction max : *{max_dir:.0f}%*",
+        f"  ↳ Limite la proportion YES vs NO dans le portfolio",
+        f"  ↳ Ex : si *{max_dir:.0f}%* → max *{max_dir:.0f}%* YES ou *{max_dir:.0f}%* NO",
     ]
 
     text = "\n".join(lines)
@@ -358,41 +367,59 @@ async def _show_alerts_menu(update: Update, user: User, us) -> None:
     on  = "✅"
     off = "❌"
 
-    def _status(enabled, value, unit=""):
+    def _flag(enabled: bool) -> str:
+        return on if enabled else off
+
+    def _status(enabled: bool, value: float, unit: str = "") -> str:
         if enabled:
-            return f"{on} *{value:.0f}{unit}*"
+            return f"{on} actif — seuil *{value:.0f}{unit}*"
         return f"{off} désactivé"
 
     lines = [
         f"🚨 *ALERTES & PROTECTIONS*\n{SEP}\n",
         f"*🛑 Stop-Loss :* {_status(sl_on, sl_pct, '%')}",
-        f"   Clôture si position baisse de *{sl_pct:.0f}%*\n",
+        f"  ↳ Clôture la position si elle perd *{sl_pct:.0f}%* de sa valeur d'entrée\n",
         f"*🎯 Take-Profit :* {_status(tp_on, tp_pct, '%')}",
-        f"   Clôture si position monte de *{tp_pct:.0f}%*\n",
+        f"  ↳ Clôture la position si elle gagne *{tp_pct:.0f}%* depuis l'entrée\n",
         f"*📉 Trailing Stop :* {_status(trail_on, trail_pct, '%')}",
-        f"   Suit le prix — déclenche si repli de *{trail_pct:.0f}%* depuis le sommet\n",
+        f"  ↳ Suit le prix à la hausse — se déclenche si repli de *{trail_pct:.0f}%*",
+        f"  ↳ Différence vs SL fixe : le seuil monte avec le prix, ne descend pas\n",
         f"*⏰ Time Exit :* {_status(time_on, time_h, 'h')}",
-        f"   Clôture automatiquement après *{time_h}h* si toujours ouverte\n",
+        f"  ↳ Force la clôture après *{time_h}h* quelle que soit la PNL",
+        f"  ↳ Utile pour éviter les positions bloquées sur marchés inactifs\n",
         f"*📤 Scale-Out :* {_status(scale_on, scale_pct, '%')}",
-        f"   Prend *{scale_pct:.0f}%* des gains au TP puis laisse courir",
+        f"  ↳ Vend *{scale_pct:.0f}%* de la position au TP et laisse courir le reste",
+        f"  ↳ Sécurise des gains partiels sans couper toute la position",
     ]
 
     text = "\n".join(lines)
 
+    # Chaque feature : bouton toggle (ON/OFF) + bouton picker (valeur %)
     keyboard = [
         [
-            InlineKeyboardButton(f"🛑 Stop-Loss : {sl_pct:.0f}%", callback_data="set_stop_loss_menu"),
-            InlineKeyboardButton(f"🎯 Take-Profit : {'ON' if tp_on else 'OFF'}", callback_data="set_take_profit_menu"),
+            InlineKeyboardButton(f"🛑 Stop-Loss {_flag(sl_on)}", callback_data="set_stop_loss_enabled"),
+            InlineKeyboardButton(f"⚙️ {sl_pct:.0f}%", callback_data="set_stop_loss_pct"),
         ],
         [
-            InlineKeyboardButton(f"📉 Trailing : {'ON' if trail_on else 'OFF'}", callback_data="set_v3_positions"),
-            InlineKeyboardButton(f"⏰ Time Exit : {'ON' if time_on else 'OFF'}", callback_data="set_v3_positions"),
+            InlineKeyboardButton(f"🎯 Take-Profit {_flag(tp_on)}", callback_data="set_take_profit_enabled"),
+            InlineKeyboardButton(f"⚙️ {tp_pct:.0f}%", callback_data="set_take_profit_pct"),
         ],
         [
-            InlineKeyboardButton(f"📤 Scale-Out : {'ON' if scale_on else 'OFF'}", callback_data="set_v3_positions"),
-            InlineKeyboardButton("📊 Positions ouvertes", callback_data="menu_positions"),
+            InlineKeyboardButton(f"📉 Trailing {_flag(trail_on)}", callback_data="set_trailing_stop_enabled"),
+            InlineKeyboardButton(f"⚙️ {trail_pct:.0f}%", callback_data="set_trailing_stop_pct"),
         ],
-        [InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back")],
+        [
+            InlineKeyboardButton(f"⏰ Time Exit {_flag(time_on)}", callback_data="set_time_exit_enabled"),
+            InlineKeyboardButton(f"⚙️ {time_h}h", callback_data="set_time_exit_hours"),
+        ],
+        [
+            InlineKeyboardButton(f"📤 Scale-Out {_flag(scale_on)}", callback_data="set_scale_out_enabled"),
+            InlineKeyboardButton(f"⚙️ {scale_pct:.0f}%", callback_data="set_scale_out_pct"),
+        ],
+        [
+            InlineKeyboardButton("📊 Positions", callback_data="menu_positions"),
+            InlineKeyboardButton("🏠 Menu principal", callback_data="menu_back"),
+        ],
     ]
 
     await update.effective_message.reply_text(
