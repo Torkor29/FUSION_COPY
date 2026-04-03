@@ -50,8 +50,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if await show_topic_menu(update, context):
             return ConversationHandler.END
 
-        from bot.handlers.menu import _build_main_menu_content
-        text, keyboard = _build_main_menu_content(tg_user, user)
+        from bot.handlers.menu import _build_hub_menu
+        text, keyboard = _build_hub_menu(tg_user, user)
         await update.message.reply_text(
             text,
             parse_mode="Markdown",
@@ -173,7 +173,7 @@ async def onboard_menu_main(
 
     Délègue au menu unifié de menu.py pour éviter toute divergence.
     """
-    from bot.handlers.menu import _build_main_menu_content
+    from bot.handlers.menu import _build_hub_menu
 
     query = update.callback_query
     await query.answer()
@@ -185,7 +185,7 @@ async def onboard_menu_main(
         if not user:
             user = await create_user(session, tg_user.id, username=tg_user.username)
 
-        text, keyboard = _build_main_menu_content(tg_user, user)
+        text, keyboard = _build_hub_menu(tg_user, user)
 
     await query.message.reply_text(
         text,
@@ -483,7 +483,7 @@ async def onboard_cancel(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """Cancel registration and return to main menu."""
-    from bot.handlers.menu import _build_main_menu_content
+    from bot.handlers.menu import _build_hub_menu
 
     query = update.callback_query
     await query.answer()
@@ -495,7 +495,7 @@ async def onboard_cancel(
     async with async_session() as session:
         user = await get_user_by_telegram_id(session, tg_user.id)
         if user:
-            text, keyboard = _build_main_menu_content(tg_user, user)
+            text, keyboard = _build_hub_menu(tg_user, user)
             await query.edit_message_text(
                 text,
                 parse_mode="Markdown",

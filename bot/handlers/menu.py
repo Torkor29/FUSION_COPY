@@ -15,8 +15,44 @@ from bot.utils.banner import send_with_banner
 logger = logging.getLogger(__name__)
 
 
+def _build_hub_menu(tg_user, user) -> tuple[str, list]:
+    """Build the HUB screen — choose between Copy Wallet and Strategies."""
+    # Copy wallet stats
+    us = user.settings
+    traders_count = len(us.followed_wallets) if us and us.followed_wallets else 0
+    copy_wallet = f"`{user.wallet_address[:6]}...{user.wallet_address[-4:]}`" if user.wallet_address else "Non configuré"
+
+    # Strategy stats
+    active_strat = sum(1 for s in (user.subscriptions or []) if s.is_active)
+    strat_wallet = f"`{user.strategy_wallet_address[:6]}...{user.strategy_wallet_address[-4:]}`" if user.strategy_wallet_address else "Non configuré"
+
+    text = (
+        f"🏠 **WENBOT FUSION**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Bonjour **{tg_user.first_name}** !\n"
+        "Choisissez votre service :\n\n"
+        f"👛 **Copy Wallet** — {traders_count} trader(s) suivi(s)\n"
+        f"   📬 {copy_wallet}\n\n"
+        f"📊 **Stratégies** — {active_strat} abonnement(s) actif(s)\n"
+        f"   📬 {strat_wallet}\n"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("👛 Copy de Wallet", callback_data="hub_copy")],
+        [InlineKeyboardButton("📊 Suivi de Stratégies", callback_data="hub_strat")],
+        [InlineKeyboardButton("📊 Mon groupe", callback_data="menu_mygroup")],
+    ]
+
+    if not user.wallet_address and not user.strategy_wallet_address:
+        keyboard.insert(0, [InlineKeyboardButton(
+            "🧭 Configurer mon wallet", callback_data="onboard_start"
+        )])
+
+    return text, keyboard
+
+
 def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
-    """Build main menu text and keyboard (single source of truth)."""
+    """Build COPY WALLET menu — only copy-trading related buttons."""
     if user.is_active and not user.is_paused:
         status = "🟢 Actif"
     elif user.is_paused:
@@ -47,9 +83,10 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         from bot.models.trade import Trade, TradeStatus
         from sqlalchemy import select, func, and_
         # We can't do async here (sync function), so just count from eagerly loaded trades
-        trade_count = len(user.trades) if user.trades else 0
+        copy_trades = [t for t in (user.trades or []) if t.strategy_id is None]
+        trade_count = len(copy_trades)
         if trade_count > 0:
-            filled = [t for t in user.trades if t.status == TradeStatus.FILLED]
+            filled = [t for t in copy_trades if t.status == TradeStatus.FILLED]
             settled = [t for t in filled if t.is_settled]
             total_pnl = sum(t.settlement_pnl or 0 for t in settled)
             pnl_sign = "+" if total_pnl >= 0 else ""
@@ -60,9 +97,8 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         pass
 
     text = (
-        f"**WENPOLYMARKET V3**\n"
+        "👛 **COPY DE WALLET**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Bonjour **{tg_user.first_name}** !\n\n"
         f"📬 {wallet_short} | {status} | {mode}\n"
         f"👥 {traders_count} trader(s) suivi(s)\n"
         f"{paper_line}"
@@ -83,10 +119,6 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
             )]
         )
 
-    # Strategy subscriptions count
-    strat_count = len(user.subscriptions) if user.subscriptions else 0
-    active_strat = sum(1 for s in (user.subscriptions or []) if s.is_active)
-
     keyboard.extend([
         [
             InlineKeyboardButton("👛 Wallets", callback_data="menu_balance"),
@@ -98,33 +130,18 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         ],
         [
             InlineKeyboardButton("⚙️ Paramètres", callback_data="menu_settings"),
-            InlineKeyboardButton("❓ Aide", callback_data="menu_help"),
-        ],
-        [
-            InlineKeyboardButton("📡 Activité traders", callback_data="menu_dashboard"),
             InlineKeyboardButton("📋 Mes copies", callback_data="menu_recap"),
         ],
         [
-            InlineKeyboardButton("🔍 Scanner traders", callback_data="menu_scanner"),
+            InlineKeyboardButton("📡 Activité traders", callback_data="menu_dashboard"),
             InlineKeyboardButton("📈 Analytics V3", callback_data="v3_analytics"),
         ],
-        # ── Strategy section ──
         [
-            InlineKeyboardButton(
-                f"📊 Stratégies ({active_strat} active{'s' if active_strat != 1 else ''})",
-                callback_data="menu_strategies",
-            ),
-            InlineKeyboardButton("📈 Statut strat.", callback_data="strat_status"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ Param. stratégie", callback_data="strat_settings"),
-        ],
-        [
-            InlineKeyboardButton("📊 Mon groupe", callback_data="menu_mygroup"),
+            InlineKeyboardButton("🔍 Scanner traders", callback_data="menu_scanner"),
         ],
     ])
 
-    # Stop / Resume Copy button — always visible
+    # Stop / Resume Copy button
     if user.is_active and not user.is_paused:
         keyboard.append([
             InlineKeyboardButton("🛑 Stop Copy", callback_data="stop_copy"),
@@ -135,9 +152,94 @@ def _build_main_menu_content(tg_user, user) -> tuple[str, list]:
         ])
 
     if user.paper_trading:
-        keyboard.insert(-1, [
+        keyboard.append([
             InlineKeyboardButton("📝 Paper Wallet", callback_data="menu_paper"),
         ])
+
+    # Switch to other service + back to hub
+    keyboard.append([
+        InlineKeyboardButton("🔄 Stratégies →", callback_data="hub_strat"),
+        InlineKeyboardButton("🏠 Accueil", callback_data="hub_home"),
+    ])
+
+    return text, keyboard
+
+
+def _build_strategy_menu(tg_user, user) -> tuple[str, list]:
+    """Build STRATEGY menu — only strategy-related buttons."""
+    active_strat = sum(1 for s in (user.subscriptions or []) if s.is_active)
+    strat_wallet = (
+        f"`{user.strategy_wallet_address[:6]}...{user.strategy_wallet_address[-4:]}`"
+        if user.strategy_wallet_address else "Non configuré"
+    )
+
+    # Strategy trade stats
+    strat_pnl_line = ""
+    try:
+        strat_trades = [t for t in (user.trades or []) if t.strategy_id is not None]
+        if strat_trades:
+            from bot.models.trade import TradeStatus
+            resolved = [t for t in strat_trades if t.pnl is not None]
+            total_pnl = sum(t.pnl or 0 for t in resolved)
+            wins = sum(1 for t in resolved if t.result == "WON")
+            wr = (wins / len(resolved) * 100) if resolved else 0
+            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+            strat_pnl_line = (
+                f"{pnl_emoji} {len(resolved)} résolus | "
+                f"WR: {wr:.0f}% | PNL: *{total_pnl:+.2f}$*\n"
+            )
+    except Exception:
+        pass
+
+    # Pause status from strategy settings
+    sus = user.strategy_settings
+    paused = sus.is_paused if sus else False
+    status = "🟡 Pause" if paused else "🟢 Actif"
+
+    text = (
+        "📊 **SUIVI DE STRATÉGIES**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📬 Wallet : {strat_wallet}\n"
+        f"📊 {active_strat} stratégie(s) active(s) | {status}\n"
+        f"{strat_pnl_line}"
+    )
+
+    if not user.strategy_wallet_address:
+        text += (
+            "\n⚠️ **Wallet stratégie non configuré** — "
+            "Créez-en un pour commencer.\n"
+        )
+
+    keyboard = []
+
+    if not user.strategy_wallet_address:
+        keyboard.append([InlineKeyboardButton(
+            "🆕 Créer wallet stratégie", callback_data="strat_create_wallet",
+        )])
+
+    keyboard.extend([
+        [InlineKeyboardButton(
+            f"📊 Stratégies disponibles ({active_strat} actives)",
+            callback_data="menu_strategies",
+        )],
+        [
+            InlineKeyboardButton("📈 Statut & PnL", callback_data="strat_status"),
+            InlineKeyboardButton("📜 Historique", callback_data="strat_history"),
+        ],
+        [InlineKeyboardButton("⚙️ Paramètres stratégie", callback_data="strat_settings")],
+    ])
+
+    # Pause / Resume
+    if paused:
+        keyboard.append([InlineKeyboardButton("▶️ Reprendre", callback_data="strat_set:toggle_pause")])
+    else:
+        keyboard.append([InlineKeyboardButton("⏸ Pause stratégies", callback_data="strat_set:toggle_pause")])
+
+    # Switch to other service + back to hub
+    keyboard.append([
+        InlineKeyboardButton("🔄 Copy Wallet →", callback_data="hub_copy"),
+        InlineKeyboardButton("🏠 Accueil", callback_data="hub_home"),
+    ])
 
     return text, keyboard
 
@@ -2373,6 +2475,48 @@ async def onboard_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
+async def hub_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the HUB screen — choose between services."""
+    query = update.callback_query
+    await query.answer()
+    tg_user = query.from_user
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, tg_user.id)
+        if not user:
+            return
+        text, keyboard = _build_hub_menu(tg_user, user)
+    await query.edit_message_text(text, parse_mode="Markdown",
+                                 reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def hub_copy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the Copy Wallet menu."""
+    query = update.callback_query
+    await query.answer()
+    tg_user = query.from_user
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, tg_user.id)
+        if not user:
+            return
+        text, keyboard = _build_main_menu_content(tg_user, user)
+    await query.edit_message_text(text, parse_mode="Markdown",
+                                 reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def hub_strat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the Strategy menu."""
+    query = update.callback_query
+    await query.answer()
+    tg_user = query.from_user
+    async with async_session() as session:
+        user = await get_user_by_telegram_id(session, tg_user.id)
+        if not user:
+            return
+        text, keyboard = _build_strategy_menu(tg_user, user)
+    await query.edit_message_text(text, parse_mode="Markdown",
+                                 reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 async def menu_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -3773,6 +3917,10 @@ def get_menu_handlers() -> list:
         CallbackQueryHandler(stop_copy, pattern="^stop_copy$"),
         CallbackQueryHandler(resume_copy, pattern="^resume_copy$"),
         CallbackQueryHandler(menu_back, pattern="^menu_back$"),
+        # Hub navigation — switch between services
+        CallbackQueryHandler(hub_home, pattern="^hub_home$"),
+        CallbackQueryHandler(hub_copy, pattern="^hub_copy$"),
+        CallbackQueryHandler(hub_strat, pattern="^hub_strat$"),
         # Mon groupe — delegate to mygroup handler
         CallbackQueryHandler(_menu_mygroup_cb, pattern="^menu_mygroup$"),
         # Fallback: "Accéder au menu principal" — envoie un NOUVEAU message
