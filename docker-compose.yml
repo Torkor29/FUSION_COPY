@@ -25,8 +25,8 @@ services:
       POSTGRES_USER: polybot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-polybot_change_me}
       POSTGRES_DB: polybot
-    ports:
-      - "5432:5432"
+    # No host port exposed — only accessible from other containers
+    # Change to "5433:5432" if you need external access
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -39,8 +39,7 @@ services:
     image: redis:7-alpine
     container_name: wenbot-fusion-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # No host port exposed — only accessible from other containers
     volumes:
       - redisdata:/data
     healthcheck:
